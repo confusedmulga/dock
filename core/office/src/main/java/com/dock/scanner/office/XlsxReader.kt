@@ -139,9 +139,11 @@ internal class XlsxReader(private val pkg: ZipPackage) {
         var maxCol = -1
         var truncated = false
 
-        val input = pkg.open(path) ?: return Sheet(name, 0, 0, emptyMap())
+        // Streamed, and memory is bounded by MAX_ROWS x MAX_COLUMNS, so a big sheet may be bigger
+        // than other parts; reading stops at the row limit anyway.
+        val input = pkg.open(path, SHEET_LIMIT) ?: return Sheet(name, 0, 0, emptyMap())
         input.use {
-            Xml.stream(it, object : DefaultHandler() {
+            streamRows(it, object : DefaultHandler() {
                 var row = -1
                 var col = -1
                 var type: String? = null
@@ -170,7 +172,12 @@ internal class XlsxReader(private val pkg: ZipPackage) {
                         "row" -> {
                             row = (a.getValue("r")?.toIntOrNull() ?: (row + 2)) - 1
                             col = -1
-                            if (row >= MAX_ROWS) truncated = true
+                            if (row >= MAX_ROWS) {
+                                // Rows come in order: nothing after this one can be shown. (Merged
+                                // ranges are listed after the rows, so a cut-short sheet loses those.)
+                                truncated = true
+                                throw SheetFull()
+                            }
                             a.getValue("ht")?.toFloatOrNull()?.let { h -> heights[row] = h * 4 / 3 }
                             if (a.getValue("hidden").let { h -> h == "1" || h == "true" }) hiddenRows += row
                         }
@@ -232,6 +239,21 @@ internal class XlsxReader(private val pkg: ZipPackage) {
         )
     }
 
+    /** Thrown by the sheet handler at [MAX_ROWS] to stop reading. */
+    private class SheetFull : RuntimeException() {
+        override fun fillInStackTrace(): Throwable = this
+    }
+
+    private fun streamRows(input: java.io.InputStream, handler: DefaultHandler) {
+        try {
+            Xml.stream(input, handler)
+        } catch (e: Exception) {
+            // Cut short at MAX_ROWS (the sheet is marked truncated). Parsers may wrap the signal.
+            val stopped = e is SheetFull || e.cause is SheetFull || (e as? org.xml.sax.SAXException)?.exception is SheetFull
+            if (!stopped) throw e
+        }
+    }
+
     /** A cell's displayed text and style; null for a cell that's only formatting. */
     private fun cell(type: String?, raw: String, styleIndex: Int): Cell? {
         val xf = styles.getOrNull(styleIndex)
@@ -255,6 +277,7 @@ internal class XlsxReader(private val pkg: ZipPackage) {
     companion object {
         const val MAX_ROWS = 20_000
         const val MAX_COLUMNS = 256
+        private const val SHEET_LIMIT = 256L * 1024 * 1024
 
         /** Column width in characters of the default font to pixels, as Excel measures it. */
         fun charsToPx(chars: Float): Float = (chars * 7 + 5).coerceAtLeast(0f)

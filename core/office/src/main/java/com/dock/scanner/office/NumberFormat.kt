@@ -16,6 +16,10 @@ import kotlin.math.roundToLong
  */
 internal object NumberFormat {
 
+    /** The day after 31 December 9999, the last date spreadsheets show. */
+    private const val LAST_DATE = 2_958_466.0
+    private const val MAX_FRACTION_DIGITS = 5
+
     /** Formats every spreadsheet app knows by id, so files don't spell them out. */
     val BUILTIN = mapOf(
         0 to "General", 1 to "0", 2 to "0.00", 3 to "#,##0", 4 to "#,##0.00",
@@ -29,6 +33,11 @@ internal object NumberFormat {
 
     fun format(value: Double, code: String, date1904: Boolean = false): String {
         if (value.isNaN() || value.isInfinite()) return "#NUM!"
+        // Format codes come from the file: one this can't apply mustn't take the whole sheet down.
+        return runCatching { formatWith(value, code, date1904) }.getOrElse { general(value) }
+    }
+
+    private fun formatWith(value: Double, code: String, date1904: Boolean): String {
         val sections = split(code)
         val (section, signHandled) = when {
             sections.size >= 3 && value == 0.0 -> sections[2] to true
@@ -191,7 +200,8 @@ internal object NumberFormat {
         val minFrac = fracPart.count { it == '0' }
         val maxFrac = fracPart.length
 
-        val rounded = BigDecimal(v).setScale(maxFrac, RoundingMode.HALF_UP)
+        // Excel works to 15 significant digits, so 2.675 (stored as 2.67499999...) shows as 2.68.
+        val rounded = BigDecimal(v).round(MathContext(15, RoundingMode.HALF_EVEN)).setScale(maxFrac, RoundingMode.HALF_UP)
         var digits = rounded.toPlainString()
         var whole = digits.substringBefore('.')
         var frac = if ('.' in digits) digits.substringAfter('.') else ""
@@ -231,8 +241,10 @@ internal object NumberFormat {
 
     private fun fraction(value: Double, pattern: String): String {
         val denPattern = pattern.substringAfter('/')
-        val fixedDen = denPattern.filter { it.isDigit() }.toIntOrNull()
-        val maxDen = if (fixedDen != null) fixedDen else (Math.pow(10.0, denPattern.count { it in "0#?" }.toDouble()) - 1).toInt().coerceAtLeast(1)
+        val fixedDen = denPattern.filter { it.isDigit() }.toIntOrNull()?.takeIf { it > 0 }
+        // Every denominator up to the limit is tried, so cap the digits a file can ask for.
+        val digits = denPattern.count { it in "0#?" }.coerceIn(1, MAX_FRACTION_DIGITS)
+        val maxDen = if (fixedDen != null) fixedDen else (Math.pow(10.0, digits.toDouble()) - 1).toInt()
         val v = abs(value)
         val hasWhole = pattern.substringBefore('/').trim().contains(' ')
         val whole = if (hasWhole) floor(v).toLong() else 0L
@@ -274,7 +286,8 @@ internal object NumberFormat {
     }
 
     private fun date(value: Double, section: String, date1904: Boolean): String {
-        if (value < 0) return "#".repeat(8)
+        // Before the first day or after 31 Dec 9999: spreadsheet apps show hashes.
+        if (value < 0 || value >= LAST_DATE) return "#".repeat(8)
         val toks = tokens(section)
         val codes = toks.filterIsInstance<Token.Code>()
         val twelveHour = Regex("(?i)am/pm|a/p").containsMatchIn(codes.joinToString("") { it.c.toString() })

@@ -1,5 +1,6 @@
 package com.dock.scanner
 
+import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -43,7 +44,8 @@ class PreviewActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        val uri = intent.data ?: run {
+        val uri = intent.data?.takeIf(::isOpenable) ?: run {
+            Toast.makeText(this, "Dock can't open this file", Toast.LENGTH_SHORT).show()
             finish()
             return
         }
@@ -75,6 +77,14 @@ class PreviewActivity : ComponentActivity() {
             }
         }
     }
+
+    /**
+     * Only files another app shares through a content provider. This activity is exported and
+     * reads with Dock's own access, so a file:// path (which could point into Dock's private
+     * storage) or a link into Dock's own provider would let any app read Dock's files through it.
+     */
+    private fun isOpenable(uri: Uri): Boolean =
+        uri.scheme == ContentResolver.SCHEME_CONTENT && uri.authority?.startsWith(packageName) != true
 
     /** Copies the file into the Dock folder, so it shows up in Files and on the Shelf. */
     private fun saveToDock(uri: Uri, name: String, mime: String?) {

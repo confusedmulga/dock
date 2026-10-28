@@ -136,7 +136,7 @@ internal class DocxReader(private val pkg: ZipPackage) {
             spans.clear()
         }
 
-        val ctx = RunContext(paraRun, onPageBreak = {
+        val ctx = RunContext(paraRun, topLevel, onPageBreak = {
             if (topLevel) {
                 if (spans.isNotEmpty() || marker != null) emit()
                 out.newPage()
@@ -158,6 +158,7 @@ internal class DocxReader(private val pkg: ZipPackage) {
 
     private class RunContext(
         val paraRun: RunProps,
+        val topLevel: Boolean,
         val onPageBreak: () -> Unit,
         val spans: MutableList<Span>,
         val pending: MutableList<Block>,
@@ -209,7 +210,9 @@ internal class DocxReader(private val pkg: ZipPackage) {
                     "column" -> text.append('\n')
                     else -> text.append('\n')
                 }
-                "w:lastRenderedPageBreak" -> {
+                // Where Word's last layout broke the page. Inside a table or text box that's
+                // the table running onto the next page, not a break in the text.
+                "w:lastRenderedPageBreak" -> if (ctx.topLevel) {
                     flush()
                     ctx.onPageBreak()
                 }

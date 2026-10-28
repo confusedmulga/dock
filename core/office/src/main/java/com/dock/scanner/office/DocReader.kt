@@ -33,7 +33,12 @@ internal class DocReader(private val cfb: Cfb) {
         // Skip property modifiers (0x01) to the piece table (0x02).
         var at = fcClx
         val end = fcClx + lcbClx
-        while (at < end && table.u8(at) == 0x01) at += 3 + table.i16(at + 1)
+        while (at < end && table.u8(at) == 0x01) {
+            // A negative size would step back onto this same byte forever.
+            val size = table.i16(at + 1)
+            if (size < 0) throw UnreadableDocumentException("This Word file is damaged")
+            at += 3 + size
+        }
         if (table.u8(at) != 0x02) throw UnreadableDocumentException("This Word file is damaged")
         val lcb = table.i32(at + 1)
         val plc = at + 5

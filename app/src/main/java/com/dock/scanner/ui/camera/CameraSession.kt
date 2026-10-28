@@ -45,7 +45,7 @@ import java.util.concurrent.Executor
  *
  * Focus distances are in diopters (1 / meters): 0 is infinity, larger is closer.
  */
-@OptIn(ExperimentalCamera2Interop::class)
+@androidx.annotation.OptIn(markerClass = [ExperimentalCamera2Interop::class])
 class CameraSession(private val context: Context) {
 
     private var provider: ProcessCameraProvider? = null
@@ -115,9 +115,14 @@ class CameraSession(private val context: Context) {
         bind()
     }
 
+    /** Binds the use cases; throws [IllegalStateException] when the device has no camera to use. */
     private fun bind() {
         val provider = provider ?: return
         val owner = owner ?: return
+        // The camera is optional in the manifest: some tablets and laptops only have a front one.
+        val selector = listOf(CameraSelector.DEFAULT_BACK_CAMERA, CameraSelector.DEFAULT_FRONT_CAMERA)
+            .firstOrNull { runCatching { provider.hasCamera(it) }.getOrDefault(false) }
+            ?: throw IllegalStateException("No camera available")
         provider.unbind(preview, capture, analysis)
         capture = imageCapture(quality)
         val group = UseCaseGroup.Builder()
@@ -127,7 +132,7 @@ class CameraSession(private val context: Context) {
             // The view port crops all three alike, so the photo and the analysed frames are what the preview shows.
             .apply { view?.viewPort?.let(::setViewPort) }
             .build()
-        val bound = provider.bindToLifecycle(owner, CameraSelector.DEFAULT_BACK_CAMERA, group)
+        val bound = provider.bindToLifecycle(owner, selector, group)
         camera = bound
         val info = Camera2CameraInfo.from(bound.cameraInfo)
         val afModes = info.getCameraCharacteristic(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES) ?: IntArray(0)

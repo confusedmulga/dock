@@ -1,5 +1,42 @@
 # Dock: bug review
 
+## Third pass (2026-10-28): `89de23e` and later
+
+Scope: everything added since the last review, about 12,600 lines in the commit "camera focus controls, Images tab, document preview and swipeable pages". It added the new `core:office` module, the exported "Open with Dock" activity, the camera session, the Images tab, the tool flows and the editor pager. Every file was read whole. The Office readers and the preview were also read through a security lens, because they now take files from any app.
+
+**Result:** 1 High and 6 Medium findings, all fixed and verified. 6 Lows are in the backlog. `./gradlew check` is green again, and the fixes are uncommitted.
+
+| ID | Sev | Status | Where | Finding | Fix |
+|---|---|---|---|---|---|
+| T1 | **High** | Confirmed on emulator, fixed | `ui/preview/DocumentViews.kt` | Opening a Word file whose table has a negative indent crashed the app: `IllegalArgumentException: Padding must be non-negative` at `TableView`. Word 2003–2010-compatible documents write `tblInd = -108` by default, so this is common. Negative top margins and spacing, slide insets, and zero or negative page sizes from damaged files crashed the same way, or through `aspectRatio`. | All padding built from document values goes through `gap()` (clamped at 0). The table fit factor stays positive. Page and slide sizes of 0 or below fall back to the usual size. Re-tested on the emulator: the same file renders. |
+| T2 | Medium | Confirmed on emulator, fixed | `PreviewActivity.kt`, manifest | The exported preview accepted `file://` URIs and read them with Dock's own access. Any app could make Dock display, share or "Save to Dock" its private files. The intent filter alone doesn't help, since explicit intents bypass it. | Only accepts `content://` URIs that aren't Dock's own provider; the `file` scheme is gone from the intent filter. Re-tested: a `file://` path into Dock's data now closes the activity without reading. |
+| T3 | Medium | Confirmed (unit test), fixed | `office/DocReader.kt` | A `.doc` whose piece table starts with a property block of size -3 looped forever: preview stuck on "Opening…" and one CPU core pegged. | A negative size makes the file unreadable. |
+| T4 | Medium | Confirmed (unit test), fixed | `office/RtfReader.kt` | `\bin` with a negative length jumped back onto itself: infinite loop. | The length is clamped at 0. |
+| T5 | Medium | Confirmed (unit test), fixed | `office/NumberFormat.kt` | Fraction formats try every denominator up to 10^digits, so `?/??????????` (from the file) took over 2 billion steps. | The denominator is capped at 5 digits. |
+| T6 | Medium | Confirmed (unit test), fixed | `office/NumberFormat.kt` | Rounding used the exact binary value, so 2.675 showed as 2.67 and 1.005 as 1.00; Excel shows 2.68 and 1.01. That's wrong figures in prices and totals. | Round to 15 significant digits first, as Excel does. |
+| T7 | Medium | Confirmed (unit test), fixed | `office/XlsxReader.kt` | A sheet whose XML is over 64 MB (about 100k-row exports) failed with "too large to preview", even though the reader is meant to cut at 20,000 rows. | Reading stops at the row limit, and the streamed sheet gets a 256 MB cap. |
+| T8 | Medium | Confirmed (API contract), fixed | `ui/camera/CameraSession.kt`, `CameraScreen.kt` | It always bound the back camera with no error handling. On a device without one (the manifest makes the camera optional), `bindToLifecycle` throws and the app crashed opening the scanner. | Uses the back camera, else the front. If neither works, it shows "The camera isn't available" and closes. |
+| T9 | Low | Confirmed, fixed | `CameraSession.kt` | Kotlin's `@OptIn` on an AndroidX opt-in marker has no effect: 15 lint errors made `./gradlew check` red. | Switched to `androidx.annotation.OptIn`. |
+| T10 | Low | Confirmed (unit test), fixed | `office/DocxReader.kt` | Word's rendered page breaks inside a table cell or text box became a line break, adding a blank line to cells of tables that span pages. | Only honoured at the top level. |
+| T11 | Low | Confirmed (unit test), fixed | `office/Xml.kt` | The SAX features meant to block DTDs don't exist on Android's parser, so a "billion laughs" file could expand entities until memory ran out. | DOCTYPEs are refused, through a lexical handler that Android's parser honours plus the Xerces feature. |
+
+**Ruled out:** a negative font size (RTF `\fs-24`) doesn't crash. Compose accepts it; checked on the emulator.
+
+**New tests:** `core/office/.../RobustnessTest.kt` has 9 tests covering T3–T7, T10 and T11, plus a check that the hand-built `.doc` reads. All 8 bug tests failed before the fix and pass after; the hang tests failed by timeout.
+
+**Backlog (Low, not fixed):**
+- Preview copies in `cache/preview` stay behind after a crash or process kill.
+- An `.xls` string whose header ends exactly at a record boundary misreads its flag byte. Excel and POI avoid writing this.
+- An RTF font table without per-font groups keeps only the last font.
+- Text and CSV over 16 MB fall back to Windows-1252 if the cut lands mid-character.
+- ODS cells drop `text:s`, tab and line-break spacing.
+- Several Word lists sharing one definition restart numbering instead of continuing (fidelity).
+- **Suspicion:** at Original quality, pages up to 8192 px run through OpenCV filters with several full-size copies, which risks memory pressure on 50 MP+ imports.
+
+**Oracles after the fixes:** build OK, lint 0 errors in all four modules, no Kotlin warnings. Unit tests: `core:office` 24, app 16, `core:scanner` 11, all passing in debug and release.
+
+---
+
 Snapshot: `main` @ `a34139f` (clean tree), reviewed 2026-10-15.
 
 ## Verdict

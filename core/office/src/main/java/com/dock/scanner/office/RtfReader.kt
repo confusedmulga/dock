@@ -167,7 +167,8 @@ internal object RtfReader {
                 param = s.substring(numStart, i).toIntOrNull()
             }
             if (i < s.length && s[i] == ' ') i++
-            if (word == "bin" && param != null) return i + param // raw binary data
+            // Raw binary data; a negative length would jump back and loop forever.
+            if (word == "bin" && param != null) return i + param.coerceAtLeast(0)
             flushBytes()
             word(word, param)
             return i

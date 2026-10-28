@@ -94,6 +94,18 @@ import kotlin.math.min
 private val Ink = Color(0xFF1B1B1B)
 private val Hairline = Color(0xFFB8B8B8)
 
+/**
+ * A margin, indent or spacing from the document as padding. Files can hold negative values
+ * (Word's negative top margins and table indents, or a damaged file), which Compose's padding
+ * rejects with an exception, so they become zero.
+ */
+private fun gap(dp: Float): Dp = dp.coerceAtLeast(0f).dp
+
+/** Paper and slide sizes, with a damaged file's zero or negative size replaced by the usual one. */
+private val TextDocument.paperWidth: Float get() = pageWidth.takeIf { it > 0f } ?: 612f
+private val Presentation.slideWidth: Long get() = width.takeIf { it > 0 } ?: 12_192_000L
+private val Presentation.slideHeight: Long get() = height.takeIf { it > 0 } ?: 6_858_000L
+
 // region Text documents
 
 /** Part of a page: long pages are split so the list only composes what's on screen. */
@@ -111,7 +123,7 @@ fun TextDocumentView(doc: TextDocument, contentPadding: PaddingValues, modifier:
         }
     }
     ZoomableColumn(modifier = modifier, contentPadding = contentPadding, spacing = 0.dp) { pageWidth ->
-        val scale = pageWidth.value / doc.pageWidth // dp per point
+        val scale = pageWidth.value / doc.paperWidth // dp per point
         items(segments.size) { i -> PageSegment(segments[i], doc, scale) }
     }
 }
@@ -131,17 +143,17 @@ private fun PageSegment(segment: Segment, doc: TextDocument, scale: Float) {
         Column(
             Modifier
                 .fillMaxWidth()
-                .then(if (wholePage) Modifier.heightIn(min = (doc.pageHeight * scale).dp).shadow(3.dp, shape) else Modifier)
+                .then(if (wholePage) Modifier.heightIn(min = gap(doc.pageHeight * scale)).shadow(3.dp, shape) else Modifier)
                 .clip(shape)
                 .background(DockColors.Paper)
                 .padding(
-                    start = (m.left * scale).dp,
-                    end = (m.right * scale).dp,
-                    top = if (segment.first) (m.top * scale).dp else 0.dp,
-                    bottom = if (segment.last) (m.bottom * scale).dp else 0.dp,
+                    start = gap(m.left * scale),
+                    end = gap(m.right * scale),
+                    top = if (segment.first) gap(m.top * scale) else 0.dp,
+                    bottom = if (segment.last) gap(m.bottom * scale) else 0.dp,
                 ),
         ) {
-            val width = ((doc.pageWidth - m.left - m.right) * scale).dp
+            val width = ((doc.paperWidth - m.left - m.right) * scale).dp
             segment.blocks.forEach { BlockView(it, scale, doc.images, width) }
         }
         if (segment.last) Spacer(Modifier.height(14.dp))
@@ -176,9 +188,9 @@ private fun ParagraphView(p: Paragraph, scale: Float, images: ImageStore?, width
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(top = (p.spaceBefore * scale).dp, bottom = (p.spaceAfter * scale).dp)
+            .padding(top = gap(p.spaceBefore * scale), bottom = gap(p.spaceAfter * scale))
             .then(p.background?.let { Modifier.background(Color(it)) } ?: Modifier)
-            .padding(start = (start * scale).dp),
+            .padding(start = gap(start * scale)),
     ) {
         p.marker?.let { marker ->
             val style = p.markerStyle ?: textSpans.firstOrNull()?.style ?: TextStyle()
@@ -271,9 +283,11 @@ private fun annotated(spans: List<TextSpan>, scale: Float, density: androidx.com
 @Composable
 private fun TableView(table: Table, scale: Float, images: ImageStore?, width: Dp) {
     val total = table.columnWidths.sum().coerceAtLeast(1f)
+    // Word often indents tables slightly to the left of the margin (a negative indent); they start at the margin here.
+    val indent = (table.indent * scale).coerceAtLeast(0f)
     // Tables wider than the text area are scaled down to fit it.
-    val fit = min(1f, (width.value - table.indent * scale) / (total * scale))
-    Column(Modifier.padding(start = (table.indent * scale).dp, top = 2.dp, bottom = 2.dp)) {
+    val fit = min(1f, (width.value - indent).coerceAtLeast(1f) / (total * scale))
+    Column(Modifier.padding(start = indent.dp, top = 2.dp, bottom = 2.dp)) {
         for (row in table.rows) {
             Row(Modifier.height(IntrinsicSize.Min)) {
                 var col = 0
@@ -364,7 +378,7 @@ private fun DocumentImage(images: ImageStore?, ref: String, widthPt: Float, heig
 @Composable
 fun PresentationView(pres: Presentation, contentPadding: PaddingValues, modifier: Modifier = Modifier) {
     ZoomableColumn(modifier = modifier, contentPadding = contentPadding, spacing = 16.dp) { pageWidth ->
-        val scale = pageWidth.value / pres.width // dp per EMU
+        val scale = pageWidth.value / pres.slideWidth // dp per EMU
         items(pres.slides.size) { i -> SlideView(pres.slides[i], pres, scale) }
     }
 }
@@ -375,13 +389,13 @@ private fun SlideView(slide: Slide, pres: Presentation, scale: Float) {
     Box(
         Modifier
             .fillMaxWidth()
-            .aspectRatio(pres.width.toFloat() / pres.height)
+            .aspectRatio(pres.slideWidth.toFloat() / pres.slideHeight)
             .shadow(3.dp, shape)
             .clip(shape)
             .background(slide.background?.let { Color(it) } ?: Color.White),
     ) {
         slide.backgroundImage?.let { ref ->
-            val image = rememberDocumentImage(pres.images, ref, with(LocalDensity.current) { (pres.width * scale).dp.roundToPx() })
+            val image = rememberDocumentImage(pres.images, ref, with(LocalDensity.current) { (pres.slideWidth * scale).dp.roundToPx() })
             image?.let { Image(it, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
         }
         slide.elements.forEach { ElementView(it, scale, pres.images) }
@@ -473,7 +487,7 @@ private fun TextFrameView(frame: TextFrame, scale: Float) {
     Box(
         Modifier
             .fillMaxSize()
-            .padding(start = (i[0] * scale).dp, top = (i[1] * scale).dp, end = (i[2] * scale).dp, bottom = (i[3] * scale).dp),
+            .padding(start = gap(i[0] * scale), top = gap(i[1] * scale), end = gap(i[2] * scale), bottom = gap(i[3] * scale)),
         contentAlignment = when (frame.anchor) {
             Anchor.Top -> Alignment.TopStart
             Anchor.Middle -> Alignment.CenterStart
@@ -507,8 +521,8 @@ private fun SlideParagraphView(p: SlideParagraph, scale: Float, fontScale: Float
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(top = if (first) 0.dp else (p.spaceBefore * pointScale).dp, bottom = (p.spaceAfter * pointScale).dp)
-            .padding(start = (start * scale).dp),
+            .padding(top = if (first) 0.dp else gap(p.spaceBefore * pointScale), bottom = gap(p.spaceAfter * pointScale))
+            .padding(start = gap(start * scale)),
     ) {
         p.bullet?.let { bullet ->
             val style = p.spans.firstOrNull()?.style ?: TextStyle(size = p.emptySize)

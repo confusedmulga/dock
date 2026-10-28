@@ -2,6 +2,8 @@ package com.dock.scanner.office
 
 import org.xml.sax.Attributes
 import org.xml.sax.InputSource
+import org.xml.sax.SAXException
+import org.xml.sax.ext.DefaultHandler2
 import org.xml.sax.helpers.DefaultHandler
 import java.io.InputStream
 import javax.xml.parsers.SAXParserFactory
@@ -123,11 +125,22 @@ internal object Xml {
         factory.isNamespaceAware = true
         // Documents come from anywhere: never fetch external entities or DTDs.
         listOf(
+            "http://apache.org/xml/features/disallow-doctype-decl" to true,
             "http://xml.org/sax/features/external-general-entities" to false,
             "http://xml.org/sax/features/external-parameter-entities" to false,
             "http://apache.org/xml/features/nonvalidating/load-external-dtd" to false,
         ).forEach { (feature, value) -> runCatching { factory.setFeature(feature, value) } }
-        return factory.newSAXParser()
+        val parser = factory.newSAXParser()
+        // Office files never declare a DTD, so refuse one outright: that rules out entity
+        // expansion ("billion laughs") on parsers that don't know the feature above (Android's).
+        runCatching { parser.setProperty("http://xml.org/sax/properties/lexical-handler", NoDoctype) }
+        return parser
+    }
+
+    private object NoDoctype : DefaultHandler2() {
+        override fun startDTD(name: String?, publicId: String?, systemId: String?) {
+            throw SAXException("Documents with a DOCTYPE aren't read")
+        }
     }
 
     /** Parses a whole part into a tree. For very large parts (sheet data) use [stream]. */

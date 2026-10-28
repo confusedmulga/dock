@@ -111,6 +111,7 @@ import com.dock.scanner.data.ScanMode
 import com.dock.scanner.data.ScanQuality
 import com.dock.scanner.ui.ScanViewModel
 import com.dock.scanner.ui.components.drawQuad
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -178,11 +179,28 @@ private fun CameraContent(vm: ScanViewModel, onDone: () -> Unit, onImported: () 
     }
     val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
 
+    // No usable camera (or it failed to open): say so and close instead of crashing.
+    fun cameraFailed() {
+        Toast.makeText(context, "The camera isn't available", Toast.LENGTH_SHORT).show()
+        onDone()
+    }
     LaunchedEffect(lifecycleOwner) {
         previewView.awaitLayout()
-        session.start(lifecycleOwner, previewView, vm.quality.value)
+        try {
+            session.start(lifecycleOwner, previewView, vm.quality.value)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            cameraFailed()
+        }
     }
-    LaunchedEffect(quality) { session.setQuality(quality) }
+    LaunchedEffect(quality) {
+        try {
+            session.setQuality(quality)
+        } catch (e: Exception) {
+            cameraFailed()
+        }
+    }
     // Edges are only looked for in Auto edges mode; Standard keeps the whole frame.
     DisposableEffect(mode) {
         if (mode == ScanMode.AutoEdges) session.setAnalyzer(analysisExecutor, LiveDocumentAnalyzer { liveQuad = it })
