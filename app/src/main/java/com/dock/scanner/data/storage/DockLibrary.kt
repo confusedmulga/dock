@@ -8,6 +8,7 @@ import android.provider.DocumentsContract
 import android.provider.DocumentsContract.Document
 import androidx.core.content.edit
 import androidx.core.net.toUri
+import com.dock.scanner.office.OfficeFormat
 import java.io.File
 
 /** A file or folder inside the user's Dock folder. */
@@ -27,6 +28,10 @@ data class LibraryItem(
 ) {
     val isPdf: Boolean get() = !isFolder && (mimeType == DockLibrary.MIME_PDF || name.endsWith(".pdf", ignoreCase = true))
     val isImage: Boolean get() = !isFolder && mimeType.startsWith("image/")
+
+    /** Word, Excel, PowerPoint, OpenDocument, RTF, CSV or text: shown in the document preview. */
+    val documentFormat: OfficeFormat? get() = if (isFolder || isPdf || isImage) null else OfficeFormat.of(name, mimeType)
+    val isDocument: Boolean get() = documentFormat != null
 
     /** Name without the file extension. */
     val displayName: String get() = if (isFolder) name else name.substringBeforeLast('.', name)
@@ -77,21 +82,21 @@ class DockLibrary(context: Context) {
     fun list(root: Uri, parentId: String): List<LibraryItem> {
         val children = DocumentsContract.buildChildDocumentsUriUsingTree(root, parentId)
         return query(children, root, parentId)
-            .filter { it.isFolder || it.isPdf || it.isImage }
+            .filter { it.isFolder || it.isPdf || it.isImage || it.isDocument }
             .map { if (it.isFolder) it.copy(childCount = countChildren(root, it.documentId)) else it }
             .sortedWith(compareByDescending<LibraryItem> { it.isFolder }.thenBy { if (it.isFolder) it.name.lowercase() else "" }
                 .thenByDescending { it.lastModified })
     }
 
-    /** Every PDF in the library (a few folder levels deep), newest first. */
-    fun allPdfs(root: Uri, maxDepth: Int = 4): List<LibraryItem> {
+    /** Every PDF and document in the library (a few folder levels deep), newest first. */
+    fun allFiles(root: Uri, maxDepth: Int = 4): List<LibraryItem> {
         val result = ArrayList<LibraryItem>()
         fun walk(parentId: String, folderName: String?, depth: Int) {
             val children = query(DocumentsContract.buildChildDocumentsUriUsingTree(root, parentId), root, parentId)
             for (child in children) {
                 when {
                     child.isFolder && depth < maxDepth -> walk(child.documentId, child.name, depth + 1)
-                    child.isPdf -> result += child.copy(folderName = folderName)
+                    child.isPdf || child.isDocument -> result += child.copy(folderName = folderName)
                 }
             }
         }

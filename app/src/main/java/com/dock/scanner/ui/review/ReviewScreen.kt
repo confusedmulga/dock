@@ -92,7 +92,9 @@ import com.dock.scanner.ui.ScanViewModel
 import com.dock.scanner.ui.components.EmptyMessage
 import com.dock.scanner.ui.components.GlassBubble
 import com.dock.scanner.ui.components.LargeTitle
+import com.dock.scanner.ui.components.SharedKeys
 import com.dock.scanner.ui.components.StatusBarBlur
+import com.dock.scanner.ui.components.sharedPage
 import com.dock.scanner.ui.theme.DockMotion
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
@@ -474,14 +476,16 @@ private fun PageCard(
         contentAlignment = Alignment.Center,
     ) {
         val layout = page.layout
+        val shared = Modifier.sharedPage(SharedKeys.page(page.id))
         if (layout != null) {
-            SheetView(layout, pagesById)
+            SheetView(layout, pagesById, shared)
         } else if (page.output != null) {
+            // Sized to the page itself (not the whole card), so it lines up with the editor's page.
             AsyncImage(
                 model = page.output,
                 contentDescription = "Page $number",
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+                modifier = shared.aspectRatio(page.aspect),
             )
         }
         if (pagesById.values.any { it.processing && (it.id == page.id || it.hostId == page.id) }) {

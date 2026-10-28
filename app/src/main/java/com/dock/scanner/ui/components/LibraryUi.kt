@@ -56,6 +56,7 @@ import com.dock.scanner.R
 import com.dock.scanner.data.storage.DockLibrary
 import com.dock.scanner.data.storage.LibraryItem
 import com.dock.scanner.data.storage.PdfPreviews
+import com.dock.scanner.office.OfficeFormat
 import com.dock.scanner.ui.tools.PdfTool
 import coil3.compose.AsyncImage
 import androidx.compose.material3.HorizontalDivider
@@ -129,23 +130,27 @@ fun PdfRow(item: LibraryItem, actions: PdfActions, showFolder: Boolean, modifier
             .padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (item.isImage) {
-            AsyncImage(
+        val format = item.documentFormat
+        when {
+            item.isImage -> AsyncImage(
                 model = item.uri,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = thumbSize.clip(MaterialTheme.shapes.extraSmall).background(MaterialTheme.colorScheme.surfaceContainerHigh),
             )
-        } else {
-            PdfThumbnail(preview?.thumbnail, thumbSize)
+            format != null -> DocumentThumbnail(format, item.extension, thumbSize)
+            else -> PdfThumbnail(preview?.thumbnail, Modifier.sharedPage(SharedKeys.pdf(item.documentId, LocalSharedOrigin.current)).then(thumbSize))
         }
         Column(Modifier.weight(1f).padding(start = 14.dp)) {
             Text(item.displayName, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(2.dp))
             val details = buildList {
                 add(friendlyDate(context, item.lastModified))
-                if (item.isImage) add(item.extension.uppercase())
-                else preview?.pageCount?.let { add(if (it == 1) "1 page" else "$it pages") }
+                when {
+                    item.isImage -> add(item.extension.uppercase())
+                    format != null -> add(item.extension.uppercase())
+                    else -> preview?.pageCount?.let { add(if (it == 1) "1 page" else "$it pages") }
+                }
                 add(Formatter.formatShortFileSize(context, item.size))
             }.joinToString(" · ")
             Text(details, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
@@ -226,7 +231,7 @@ fun rememberPdfPreview(item: LibraryItem, width: Dp) = run {
     // 2x the display size so thumbnails stay crisp on high-density screens.
     val widthPx = with(LocalDensity.current) { (width * 2).roundToPx() }
     produceState(PdfPreviews.cached(item.uri, item.lastModified), item.uri, item.lastModified) {
-        if (value == null) value = PdfPreviews.load(context, item.uri, item.lastModified, widthPx)
+        if (value == null && item.isPdf) value = PdfPreviews.load(context, item.uri, item.lastModified, widthPx)
     }
 }
 
@@ -250,6 +255,41 @@ fun PdfThumbnail(bitmap: android.graphics.Bitmap?, modifier: Modifier = Modifier
                 modifier = Modifier.size(22.dp),
             )
         }
+    }
+}
+
+/** A tinted tile with the kind of document and its extension, standing in for a page preview. */
+@Composable
+fun DocumentThumbnail(format: OfficeFormat, extension: String, modifier: Modifier = Modifier) {
+    val (color, icon) = documentLook(format)
+    val shape = MaterialTheme.shapes.extraSmall
+    Column(
+        modifier
+            .clip(shape)
+            .background(color.copy(alpha = 0.14f))
+            .border(1.dp, color.copy(alpha = 0.35f), shape),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(painterResource(icon), contentDescription = null, tint = color, modifier = Modifier.size(22.dp))
+        Text(
+            extension.uppercase().take(5),
+            style = MaterialTheme.typography.labelSmall,
+            color = color,
+            maxLines = 1,
+            modifier = Modifier.padding(top = 2.dp),
+        )
+    }
+}
+
+/** Blue for text, green for sheets, orange for slides: the colors people associate with each. */
+@Composable
+fun documentLook(format: OfficeFormat): Pair<Color, Int> {
+    val dark = GlassColors.isDark
+    return when (format.kind) {
+        OfficeFormat.Kind.Text -> (if (dark) Color(0xFF8AB4F8) else Color(0xFF2B5CB8)) to R.drawable.ic_article
+        OfficeFormat.Kind.Sheet -> (if (dark) Color(0xFF81C995) else Color(0xFF1E7B45)) to R.drawable.ic_table
+        OfficeFormat.Kind.Slides -> (if (dark) Color(0xFFF6AE80) else Color(0xFFC4501E)) to R.drawable.ic_slides
     }
 }
 

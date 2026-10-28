@@ -40,8 +40,10 @@ data class Page(
     val hostId: String? = null,
     val processing: Boolean = true,
     val revision: Int = 0,
+    /** Resolution and compression of the finished page. */
+    val quality: ScanQuality = ScanQuality.Standard,
 ) {
-    val renderKey: String get() = "${source.name}|$quad|$filter|$rotation"
+    val renderKey: String get() = "${source.name}|$quad|$filter|$rotation|$quality"
 
     val aspect: Float get() = if (outputWidth > 0 && outputHeight > 0) outputWidth.toFloat() / outputHeight else 1 / 1.414f
 }

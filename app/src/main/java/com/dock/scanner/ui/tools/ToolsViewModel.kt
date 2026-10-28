@@ -20,12 +20,20 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
 import kotlin.math.roundToInt
 
-enum class PdfTool { Compress, ToImages, Merge, Split }
+/** @param multiple whether the tool takes several PDFs at once. */
+enum class PdfTool(val multiple: Boolean) {
+    Edit(false), Compress(false), ToImages(true), Merge(true), Split(false);
+
+    /** Fewest PDFs the tool can work with. */
+    val minInputs: Int get() = if (this == Merge) 2 else 1
+}
 
 enum class ImageFormat(val label: String, val ext: String, val mime: String) {
     JPG("JPG", "jpg", "image/jpeg"),
@@ -43,8 +51,10 @@ sealed interface ToolState {
 }
 
 /**
- * Runs the PDF tools. Inputs come from the system picker or the library; results are written
- * into the Dock folder (next to the input when it came from the library), never overwriting it.
+ * Runs the PDF tools. A tool opens on a list of the library's PDFs to choose from (or on its
+ * options, when it was opened for a particular file); files from elsewhere come in through the
+ * system picker. Results are written into the Dock folder (next to the input when it came from
+ * the library), never overwriting it.
  */
 class ToolsViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -63,38 +73,102 @@ class ToolsViewModel(app: Application) : AndroidViewModel(app) {
     private val _loadingInputs = MutableStateFlow(false)
     val loadingInputs: StateFlow<Boolean> = _loadingInputs.asStateFlow()
 
+    /** True while the list of PDFs to choose from is showing, false on the tool's options. */
+    private val _choosing = MutableStateFlow(true)
+    val choosing: StateFlow<Boolean> = _choosing.asStateFlow()
+
+    /** The list was opened from the options to add or swap files: back returns there instead of leaving. */
+    private val _backToOptions = MutableStateFlow(false)
+    val backToOptions: StateFlow<Boolean> = _backToOptions.asStateFlow()
+
+    /** The tool opened on the list (not on a file's options), so back from the options goes to the list. */
+    var startedWithList = true
+        private set
+
     private var job: Job? = null
     private var currentRun: Run? = null
+
+    /** Bumped by [start], so inputs still loading for an earlier tool are dropped. */
+    private var session = 0
+    private val inputLock = Mutex()
+    private var loads = 0
 
     /** Opens a tool, optionally with a file from the library already chosen. */
     fun start(tool: PdfTool, preset: LibraryItem? = null) {
         currentRun?.superseded = true
         job?.cancel()
+        session++
         _tool.value = tool
         _inputs.value = emptyList()
         _state.value = ToolState.Idle
+        startedWithList = preset == null
+        _choosing.value = preset == null
+        _backToOptions.value = false
         if (preset != null) addInputs(listOf(preset.uri), preset.parentId)
     }
 
-    fun addInputs(uris: List<Uri>, parentId: String? = null) {
+    /** Shows the list of PDFs. */
+    fun choose(returnToOptions: Boolean) {
+        _backToOptions.value = returnToOptions
+        _choosing.value = true
+    }
+
+    fun showOptions() {
+        _choosing.value = false
+    }
+
+    /** Picks a PDF from the list, or unpicks it. Single-file tools go straight on to their options. */
+    fun toggle(item: LibraryItem) {
+        val index = _inputs.value.indexOfFirst { it.uri == item.uri }
+        when {
+            !_tool.value.multiple -> {
+                if (index < 0) addInputs(listOf(item.uri), item.parentId)
+                _choosing.value = false
+            }
+            index >= 0 -> remove(index)
+            else -> addInputs(listOf(item.uri), item.parentId)
+        }
+    }
+
+    /** Files from the system picker. */
+    fun addPicked(uris: List<Uri>) {
         if (uris.isEmpty()) return
+        addInputs(uris)
+        if (!_tool.value.multiple) _choosing.value = false
+    }
+
+    private fun addInputs(uris: List<Uri>, parentId: String? = null) {
+        val tool = _tool.value
+        val started = session
+        loads++
         _loadingInputs.value = true
         viewModelScope.launch {
-            val added = withContext(Dispatchers.IO) {
-                uris.mapNotNull { uri ->
-                    runCatching { PdfSources.describe(resolver, uri, parentId) }
-                        .onFailure {
-                            _state.value = ToolState.Failed(
-                                if (it is PasswordProtectedException) "Password-protected PDFs aren't supported yet" else "Couldn't read a PDF",
-                            )
+            try {
+                // One request at a time, in the order they were made, so a merge keeps the order PDFs were tapped in.
+                inputLock.withLock {
+                    var failure: Throwable? = null
+                    val added = withContext(Dispatchers.IO) {
+                        uris.mapNotNull { uri ->
+                            runCatching { PdfSources.describe(resolver, uri, parentId) }.onFailure { failure = it }.getOrNull()
                         }
-                        .getOrNull()
+                    }
+                    if (session != started) return@withLock
+                    failure?.let {
+                        _state.value = ToolState.Failed(
+                            if (it is PasswordProtectedException) "Password-protected PDFs aren't supported yet" else "Couldn't read a PDF",
+                        )
+                    }
+                    _inputs.value = if (!tool.multiple) {
+                        added.takeLast(1).ifEmpty { _inputs.value }
+                    } else {
+                        _inputs.value + added.filter { new -> _inputs.value.none { it.uri == new.uri } }
+                    }
+                    if (_state.value is ToolState.Done) _state.value = ToolState.Idle
                 }
+            } finally {
+                loads--
+                _loadingInputs.value = loads > 0
             }
-            val single = _tool.value == PdfTool.Compress || _tool.value == PdfTool.Split
-            _inputs.value = if (single) added.takeLast(1).ifEmpty { _inputs.value } else _inputs.value + added
-            if (_state.value is ToolState.Done) _state.value = ToolState.Idle
-            _loadingInputs.value = false
         }
     }
 
@@ -132,6 +206,34 @@ class ToolsViewModel(app: Application) : AndroidViewModel(app) {
             "$before → ${size(result.compressedBytes)}  (−${(result.savedFraction * 100).roundToInt()}%)",
             pdf = pdf,
         )
+    }
+
+    /** Compresses with the sharpest settings that bring the PDF under [targetBytes]. */
+    fun compressToSize(targetBytes: Long) = launchTool("Compressing") {
+        val input = _inputs.value.single()
+        val inFile = PdfSources.copyToCache(context, input.uri, dir, "in.pdf")
+        val before = size(inFile.length())
+        if (inFile.length() <= targetBytes) {
+            return@launchTool ToolOutput("Already under ${size(targetBytes)}", "This PDF is $before, so there's nothing to compress.")
+        }
+        val outFile = File(inFile.parentFile, "out.pdf")
+        val target = PdfTools.compressToSize(inFile, outFile, targetBytes) { progress(it * 0.9f) }
+        val result = target.result
+        if (!result.improved || result.savedFraction < 0.01f) {
+            return@launchTool ToolOutput("Can't get it any smaller", "$before. This PDF's images are already as compressed as Dock can make them.")
+        }
+        val parent = input.parentId ?: library.rootId(root)
+        val pdf = savePdf(root, parent, "${input.name} (compressed)", outFile)
+        val change = "$before → ${size(result.compressedBytes)}  (−${(result.savedFraction * 100).roundToInt()}%)"
+        if (target.reachedTarget) {
+            ToolOutput("Saved “${pdf.displayName}”", "$change, at ${target.settings.dpi} dpi", pdf = pdf)
+        } else {
+            ToolOutput(
+                "Couldn't get under ${size(targetBytes)}",
+                "$change. Saved “${pdf.displayName}”, the smallest Dock can make it.",
+                pdf = pdf,
+            )
+        }
     }
 
     fun merge(name: String) = launchTool("Merging") {

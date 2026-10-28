@@ -61,10 +61,10 @@ import com.dock.scanner.ui.components.SectionHeader
 import com.dock.scanner.ui.components.dateSection
 import com.dock.scanner.ui.theme.DockMotion
 
-/** Every PDF in the library, newest first, with search across names and folders. */
+/** Every PDF and document in the library, newest first, with search across names and folders. */
 @Composable
 fun FilesScreen(vm: LibraryViewModel, actions: PdfActions, bottomInset: Dp) {
-    val pdfs by vm.allPdfs.collectAsStateWithLifecycle()
+    val pdfs by vm.allFiles.collectAsStateWithLifecycle()
     var searching by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -91,7 +91,14 @@ fun FilesScreen(vm: LibraryViewModel, actions: PdfActions, bottomInset: Dp) {
         item(key = "title") {
             LargeTitle(
                 title = "Files",
-                subtitle = pdfs?.takeIf { it.isNotEmpty() }?.let { if (it.size == 1) "1 PDF" else "${it.size} PDFs" },
+                subtitle = pdfs?.takeIf { it.isNotEmpty() }?.let { files ->
+                    val count = files.count { it.isPdf }
+                    val documents = files.size - count
+                    listOfNotNull(
+                        if (count == 1) "1 PDF" else "$count PDFs",
+                        documents.takeIf { it > 0 }?.let { if (it == 1) "1 document" else "$it documents" },
+                    ).joinToString(" · ")
+                },
             ) {
                 if (!searching) {
                     ChromeButton(
@@ -117,7 +124,7 @@ fun FilesScreen(vm: LibraryViewModel, actions: PdfActions, bottomInset: Dp) {
                 Box(Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             }
             pdfs!!.isEmpty() -> item(key = "empty") {
-                EmptyMessage("No PDFs yet", "Scan a document or use a tool on Home. Every PDF you make is saved in your Dock folder and shows up here.")
+                EmptyMessage("No files yet", "Scan a document or use a tool on Home. Every PDF you make is saved in your Dock folder and shows up here, along with any Word, Excel or PowerPoint files you put there.")
             }
             query.isNotBlank() -> {
                 if (results.isEmpty()) {

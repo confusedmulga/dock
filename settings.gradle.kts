@@ -25,3 +25,4 @@ rootProject.name = "Dock"
 include(":app")
 include(":core:scanner")
 include(":core:pdf")
+include(":core:office")

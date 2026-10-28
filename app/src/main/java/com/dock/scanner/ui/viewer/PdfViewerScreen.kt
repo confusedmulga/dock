@@ -85,12 +85,16 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dock.scanner.R
 import com.dock.scanner.data.storage.LibraryItem
+import com.dock.scanner.data.storage.PdfPreviews
 import com.dock.scanner.ui.LibraryViewModel
 import com.dock.scanner.ui.components.EmptyMessage
 import com.dock.scanner.ui.components.GlassBubble
 import com.dock.scanner.ui.components.ItemDialogs
+import com.dock.scanner.ui.components.ZoomableColumn
+import com.dock.scanner.ui.components.SharedKeys
 import com.dock.scanner.ui.components.glass
 import com.dock.scanner.ui.components.rememberItemDialogState
+import com.dock.scanner.ui.components.sharedPage
 import com.dock.scanner.ui.components.shareDocument
 import com.dock.scanner.ui.theme.DockColors
 import dev.chrisbanes.haze.HazeState
@@ -103,9 +107,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlin.math.sqrt
-
-private const val MAX_ZOOM = 5f
-private const val DOUBLE_TAP_ZOOM = 2.5f
 
 /** Android won't draw a bitmap over 100 MB; 16 MP (64 MB) keeps very tall pages well below that. */
 private const val MAX_PAGE_PIXELS = 16_000_000.0
@@ -138,7 +139,14 @@ fun PdfViewerScreen(
     var menu by remember { mutableStateOf(false) }
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainer)) {
-        ZoomablePdf(item.uri, Modifier.fillMaxSize().hazeSource(hazeState))
+        ZoomablePdf(
+            uri = item.uri,
+            // The list's thumbnail stands in for the first page until it's rendered, so the
+            // page that grows out of the list isn't blank.
+            firstPage = remember(item.uri) { PdfPreviews.cached(item.uri, item.lastModified)?.thumbnail },
+            firstPageKey = SharedKeys.pdf(item.documentId, vm.viewingFrom),
+            modifier = Modifier.fillMaxSize().hazeSource(hazeState),
+        )
 
         Row(
             Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp),
@@ -183,16 +191,17 @@ fun PdfViewerScreen(
     ItemDialogs(dialogs, vm, destinations)
 }
 
+/** The file actions under a viewer's name pill; [onEdit] and [onCompress] are PDF-only. */
 @Composable
-private fun FileMenu(
+internal fun FileMenu(
     expanded: Boolean,
     item: LibraryItem,
     onDismiss: () -> Unit,
     onRename: () -> Unit,
     onMove: () -> Unit,
-    onEdit: () -> Unit,
-    onCompress: () -> Unit,
     onDelete: () -> Unit,
+    onEdit: (() -> Unit)? = null,
+    onCompress: (() -> Unit)? = null,
 ) {
     fun run(action: () -> Unit) {
         onDismiss()
@@ -226,16 +235,20 @@ private fun FileMenu(
             },
             onClick = { run(onMove) },
         )
-        DropdownMenuItem(
-            text = { Text("Edit pages") },
-            leadingIcon = { Icon(painterResource(R.drawable.ic_edit_doc), null) },
-            onClick = { run(onEdit) },
-        )
-        DropdownMenuItem(
-            text = { Text("Compress") },
-            leadingIcon = { Icon(painterResource(R.drawable.ic_compress), null) },
-            onClick = { run(onCompress) },
-        )
+        onEdit?.let { edit ->
+            DropdownMenuItem(
+                text = { Text("Edit pages") },
+                leadingIcon = { Icon(painterResource(R.drawable.ic_edit_doc), null) },
+                onClick = { run(edit) },
+            )
+        }
+        onCompress?.let { compress ->
+            DropdownMenuItem(
+                text = { Text("Compress") },
+                leadingIcon = { Icon(painterResource(R.drawable.ic_compress), null) },
+                onClick = { run(compress) },
+            )
+        }
         HorizontalDivider()
         DropdownMenuItem(
             text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
@@ -245,13 +258,9 @@ private fun FileMenu(
     }
 }
 
-/**
- * The pages in a scrolling column that can be pinch-zoomed (up to 5x), double-tapped to zoom
- * in and out, and panned with a fling. At 1x the list scrolls normally; when zoomed, dragging
- * pans the magnified view and vertical movement past its edge scrolls the list.
- */
+/** The PDF's pages in a [ZoomableColumn]; the first one shares its element with the list thumbnail. */
 @Composable
-private fun ZoomablePdf(uri: Uri, modifier: Modifier) {
+fun ZoomablePdf(uri: Uri, modifier: Modifier, firstPage: Bitmap? = null, firstPageKey: String? = null) {
     val context = LocalContext.current
     // PdfRenderer allows one open page at a time, so all rendering is serialized.
     val document = remember(uri) {
@@ -266,124 +275,34 @@ private fun ZoomablePdf(uri: Uri, modifier: Modifier) {
         Box(modifier, contentAlignment = Alignment.Center) { EmptyMessage("Can't open this PDF", "It may have been moved or deleted.") }
         return
     }
-
-    val listState = rememberLazyListState()
-    val scope = rememberCoroutineScope()
-    var scale by remember { mutableFloatStateOf(1f) }
-    var offset by remember { mutableStateOf(Offset.Zero) }
-    var viewport by remember { mutableStateOf(IntSize.Zero) }
-    var fling by remember { mutableStateOf<Job?>(null) }
-
-    // The view is scaled from its top-left corner, so it can move between (1 - scale) × size and 0.
-    fun clamp(o: Offset, s: Float) = Offset(
-        o.x.coerceIn(viewport.width * (1 - s), 0f),
-        o.y.coerceIn(viewport.height * (1 - s), 0f),
-    )
-
-    /** Moves the zoomed view; vertical movement beyond its edge scrolls the list instead. */
-    fun pan(delta: Offset) {
-        val target = offset + delta
-        val clamped = clamp(target, scale)
-        offset = clamped
-        val leftover = target.y - clamped.y
-        if (leftover != 0f) listState.dispatchRawDelta(-leftover / scale)
-    }
-
     val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-
-    BoxWithConstraints(
-        modifier
-            .onSizeChanged { viewport = it }
-            .pointerInput(Unit) {
-                awaitEachGesture {
-                    // Initial pass: pinches and zoomed pans are handled here, before the list sees them.
-                    awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                    fling?.cancel()
-                    val velocity = VelocityTracker()
-                    var singlePan = false
-                    do {
-                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                        val pressed = event.changes.count { it.pressed }
-                        if (pressed >= 2) {
-                            val centroid = event.calculateCentroid()
-                            val newScale = (scale * event.calculateZoom()).coerceIn(1f, MAX_ZOOM)
-                            // Keep the point between the fingers under the fingers.
-                            val zoomed = centroid - (centroid - offset) * (newScale / scale) + event.calculatePan()
-                            scale = newScale
-                            offset = clamp(zoomed, newScale)
-                            singlePan = false
-                            event.changes.forEach { it.consume() }
-                        } else if (pressed == 1 && scale > 1f) {
-                            val change = event.changes.first { it.pressed }
-                            velocity.addPosition(change.uptimeMillis, change.position)
-                            val delta = change.positionChange()
-                            if (delta != Offset.Zero) {
-                                pan(delta)
-                                singlePan = true
-                                change.consume()
-                            }
-                        }
-                    } while (event.changes.any { it.pressed })
-
-                    if (scale < 1.03f) {
-                        scale = 1f
-                        offset = Offset.Zero
-                    } else if (singlePan) {
-                        // Carry the finger's speed on, like a normal scroll fling.
-                        val v = velocity.calculateVelocity()
-                        fling = scope.launch {
-                            var last = Offset.Zero
-                            Animatable(Offset.Zero, Offset.VectorConverter)
-                                .animateDecay(Offset(v.x, v.y), exponentialDecay()) {
-                                    pan(value - last)
-                                    last = value
-                                }
-                        }
-                    }
-                }
-            }
-            .pointerInput(Unit) {
-                detectTapGestures(onDoubleTap = { tap ->
-                    fling?.cancel()
-                    scope.launch {
-                        val startScale = scale
-                        val endScale = if (scale > 1.1f) 1f else DOUBLE_TAP_ZOOM
-                        val anchor = (tap - offset) / startScale // content point under the finger
-                        animate(0f, 1f, animationSpec = spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow)) { t, _ ->
-                            val s = startScale + (endScale - startScale) * t
-                            scale = s
-                            offset = clamp(tap - anchor * s, s)
-                        }
-                    }
-                })
-            },
-    ) {
-        val density = LocalDensity.current
-        val layoutWidthPx = with(density) { (maxWidth - 32.dp).roundToPx() }
+    val density = LocalDensity.current
+    ZoomableColumn(
+        modifier = modifier,
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = top + 76.dp, bottom = bottom + 24.dp),
+    ) { pageWidth ->
         // Rendered sharper than the layout, so zooming in stays crisp for a while.
-        val renderWidthPx = (layoutWidthPx * 1.75f).toInt().coerceAtMost(2000)
-        LazyColumn(
-            state = listState,
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = top + 76.dp, bottom = bottom + 24.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    scaleX = scale
-                    scaleY = scale
-                    translationX = offset.x
-                    translationY = offset.y
-                    transformOrigin = TransformOrigin(0f, 0f)
-                },
-        ) {
-            items(document.pageCount) { index -> PdfPage(document, lock, index, renderWidthPx) }
+        val renderWidthPx = (with(density) { pageWidth.roundToPx() } * 1.75f).toInt().coerceAtMost(2000)
+        items(document.pageCount) { index ->
+            if (index == 0 && firstPageKey != null) {
+                PdfPage(document, lock, index, renderWidthPx, placeholder = firstPage, modifier = Modifier.sharedPage(firstPageKey))
+            } else {
+                PdfPage(document, lock, index, renderWidthPx)
+            }
         }
     }
 }
 
 @Composable
-private fun PdfPage(document: PdfRenderer, lock: Mutex, index: Int, widthPx: Int) {
+private fun PdfPage(
+    document: PdfRenderer,
+    lock: Mutex,
+    index: Int,
+    widthPx: Int,
+    modifier: Modifier = Modifier,
+    placeholder: Bitmap? = null,
+) {
     val page by produceState<Bitmap?>(null, index, widthPx) {
         value = withContext(Dispatchers.IO) {
             lock.withLock {
@@ -400,9 +319,9 @@ private fun PdfPage(document: PdfRenderer, lock: Mutex, index: Int, widthPx: Int
         }
     }
     val shape = MaterialTheme.shapes.extraSmall
-    val bitmap = page
+    val bitmap = page ?: placeholder
     Box(
-        Modifier
+        modifier
             .fillMaxWidth()
             .aspectRatio(bitmap?.let { it.width.toFloat() / it.height } ?: (1 / 1.414f))
             .shadow(3.dp, shape)
@@ -410,7 +329,9 @@ private fun PdfPage(document: PdfRenderer, lock: Mutex, index: Int, widthPx: Int
             .background(DockColors.Paper),
     ) {
         if (bitmap != null) {
-            Image(bitmap.asImageBitmap(), contentDescription = "Page ${index + 1}", contentScale = ContentScale.FillBounds, modifier = Modifier.fillMaxSize())
+            // Crop rather than stretch: while the page morphs from a list thumbnail, its box
+            // briefly has the thumbnail's shape. At rest the box matches the page exactly.
+            Image(bitmap.asImageBitmap(), contentDescription = "Page ${index + 1}", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         }
     }
 }

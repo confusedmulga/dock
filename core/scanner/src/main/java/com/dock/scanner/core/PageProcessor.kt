@@ -19,6 +19,7 @@ import kotlin.math.roundToInt
 object PageProcessor {
 
     private const val EDGE_TRIM = 0.004
+    private const val FULL_COLOR_QUALITY = 95
 
     private val openCvLoaded: Boolean by lazy { OpenCVLoader.initLocal() }
 
@@ -28,17 +29,16 @@ object PageProcessor {
      */
     fun initOpenCv(): Boolean = openCvLoaded
 
-    /** Upright pixel size of a JPEG, honouring its EXIF orientation. */
+    /**
+     * Upright pixel size of a JPEG, honouring its EXIF orientation. The size comes from the
+     * image itself: EXIF size tags go stale when an app edits a photo without updating them.
+     */
     fun uprightSize(file: File): Pair<Int, Int> {
-        val exif = ExifInterface(file)
-        val w = exif.getAttributeInt(ExifInterface.TAG_IMAGE_WIDTH, 0)
-        val h = exif.getAttributeInt(ExifInterface.TAG_IMAGE_LENGTH, 0)
-        val (width, height) = if (w > 0 && h > 0) w to h else {
-            val opts = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            android.graphics.BitmapFactory.decodeFile(file.absolutePath, opts)
-            opts.outWidth to opts.outHeight
-        }
-        return if (exif.rotationDegrees % 180 == 0) width to height else height to width
+        val opts = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeFile(file.absolutePath, opts)
+        if (opts.outWidth <= 0 || opts.outHeight <= 0) throw IOException("Cannot read ${file.name}")
+        val (width, height) = opts.outWidth to opts.outHeight
+        return if (ExifInterface(file).rotationDegrees % 180 == 0) width to height else height to width
     }
 
     /** Auto-detects the document in a photo file. Decodes at 1/4 resolution, so it is fast. */
@@ -75,7 +75,14 @@ object PageProcessor {
         // OpenCV picks the encoder from the extension, so the temp name must still end in .jpg.
         val size = rotated.cols() to rotated.rows()
         val tmp = File(output.parentFile, "tmp_" + output.name)
-        val ok = Imgcodecs.imwrite(tmp.absolutePath, rotated, MatOfInt(Imgcodecs.IMWRITE_JPEG_QUALITY, jpegQuality))
+        // At the top qualities, keep full color resolution as well (no chroma subsampling).
+        val params = if (jpegQuality >= FULL_COLOR_QUALITY) {
+            MatOfInt(Imgcodecs.IMWRITE_JPEG_QUALITY, jpegQuality, Imgcodecs.IMWRITE_JPEG_SAMPLING_FACTOR, Imgcodecs.IMWRITE_JPEG_SAMPLING_FACTOR_444)
+        } else {
+            MatOfInt(Imgcodecs.IMWRITE_JPEG_QUALITY, jpegQuality)
+        }
+        val ok = Imgcodecs.imwrite(tmp.absolutePath, rotated, params)
+        params.release()
         rotated.release()
         if (!ok || !tmp.renameTo(output)) {
             tmp.delete()

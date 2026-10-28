@@ -5,8 +5,12 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.EaseOutCubic
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerDefaults
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -20,10 +24,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -32,13 +37,16 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.dock.scanner.PreviewActivity
 import com.dock.scanner.R
 import com.dock.scanner.data.storage.LibraryItem
-import com.dock.scanner.data.tools.PickPdfs
+import com.dock.scanner.office.OfficeFormat
 import com.dock.scanner.ui.LibraryViewModel
 import com.dock.scanner.ui.components.GlassBubble
 import com.dock.scanner.ui.components.GlassIsland
 import com.dock.scanner.ui.components.ItemDialogs
+import com.dock.scanner.ui.components.LocalSharedOrigin
 import com.dock.scanner.ui.components.MainTab
 import com.dock.scanner.ui.components.PdfActions
 import com.dock.scanner.ui.components.StatusBarBlur
@@ -48,20 +56,24 @@ import com.dock.scanner.ui.components.viewFile
 import com.dock.scanner.ui.files.FilesScreen
 import com.dock.scanner.ui.home.HomeScreen
 import com.dock.scanner.ui.home.HomeTool
+import com.dock.scanner.ui.images.ImagesScreen
+import com.dock.scanner.ui.images.ImagesViewModel
 import com.dock.scanner.ui.shelf.ShelfScreen
 import com.dock.scanner.ui.tools.PdfTool
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 
 /**
- * Home (tools), Files (every PDF) and Shelf (folders), with the floating glass island and the
- * scan button. Content scrolls underneath the island, which blurs whatever passes behind it.
+ * Home (tools), Images (the image resizer), Files (every PDF and document) and Shelf
+ * (folders), swiped between or picked on the floating glass island, plus the scan button.
+ * Content scrolls underneath the island, which blurs whatever passes behind it.
  */
 @Composable
 fun MainShell(
     vm: LibraryViewModel,
     onScan: (folderId: String?) -> Unit,
     onOpenPdf: (LibraryItem) -> Unit,
+    onOpenDocument: (LibraryItem) -> Unit,
     onEditPdf: (Uri, LibraryItem?) -> Unit,
     onImagesPicked: (List<Uri>) -> Unit,
     onOpenTool: (PdfTool, LibraryItem?) -> Unit,
@@ -70,7 +82,16 @@ fun MainShell(
     val context = LocalContext.current
     val tab by vm.tab.collectAsStateWithLifecycle()
     val hazeState = remember { HazeState() }
-    val tabStates = rememberSaveableStateHolder()
+    val imagesVm: ImagesViewModel = viewModel()
+    val pager = rememberPagerState(initialPage = tab.ordinal) { MainTab.entries.size }
+    // Tab changes made elsewhere (the island, "See all", a tool opening the Shelf) move the pager...
+    LaunchedEffect(tab) {
+        if (pager.targetPage != tab.ordinal) pager.animateScrollToPage(tab.ordinal, animationSpec = tween(280, easing = EaseOutCubic))
+    }
+    // ...and a swipe that settles on a page makes it the tab.
+    LaunchedEffect(pager) {
+        snapshotFlow { pager.settledPage }.collect { vm.tab.value = MainTab.entries[it] }
+    }
     val dialogs = rememberItemDialogState()
     val destinations by vm.destinations.collectAsStateWithLifecycle()
     val shelfPath by vm.shelfPath.collectAsStateWithLifecycle()
@@ -82,17 +103,23 @@ fun MainShell(
     // Other tabs → Home on back (the Shelf first steps out of any open folder).
     BackHandler(enabled = tab != MainTab.Home && !(tab == MainTab.Shelf && shelfPath.isNotEmpty())) { vm.tab.value = MainTab.Home }
 
-    val rootDocument = { vm.root.value?.let { vm.library.documentUri(it, vm.library.rootId(it)) } }
-    val pickPdfToEdit = rememberLauncherForActivityResult(PickPdfs(rootDocument, multiple = false)) { uris ->
-        uris.firstOrNull()?.let { onEditPdf(it, null) }
-    }
     val pickImages = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(50)) { uris ->
         if (uris.isNotEmpty()) onImagesPicked(uris)
+    }
+    // Documents from anywhere on the phone open in the preview.
+    val pickDocument = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) context.startActivity(PreviewActivity.intent(context, uri, null))
     }
 
     val actions = remember(vm) {
         PdfActions(
-            onOpen = { if (it.isPdf) onOpenPdf(it) else viewFile(context, it) },
+            onOpen = {
+                when {
+                    it.isPdf -> onOpenPdf(it)
+                    it.isDocument -> onOpenDocument(it)
+                    else -> viewFile(context, it)
+                }
+            },
             onShare = { shareDocument(context, it.uri, it.name, it.mimeType.ifEmpty { "application/pdf" }) },
             onRename = { dialogs.renaming = it },
             onMove = { dialogs.moving = it },
@@ -106,8 +133,16 @@ fun MainShell(
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
         Box(Modifier.fillMaxSize().hazeSource(hazeState)) {
-            Crossfade(tab, animationSpec = tween(160), label = "tab") { current ->
-                tabStates.SaveableStateProvider(current.name) {
+            // Swipe between tabs, as in braim: springy snapping, neighbours kept ready.
+            HorizontalPager(
+                state = pager,
+                beyondViewportPageCount = 1,
+                flingBehavior = PagerDefaults.flingBehavior(state = pager, snapAnimationSpec = spring(dampingRatio = 0.86f, stiffness = 250f)),
+                key = { MainTab.entries[it].name },
+                modifier = Modifier.fillMaxSize(),
+            ) { page ->
+                val current = MainTab.entries[page]
+                CompositionLocalProvider(LocalSharedOrigin provides current.name) {
                     when (current) {
                         MainTab.Home -> HomeScreen(
                             vm = vm,
@@ -116,16 +151,18 @@ fun MainShell(
                             onTool = { tool ->
                                 when (tool) {
                                     HomeTool.Scan -> onScan(null)
-                                    HomeTool.Edit -> pickPdfToEdit.launch(Unit)
+                                    HomeTool.Edit -> onOpenTool(PdfTool.Edit, null)
                                     HomeTool.Compress -> onOpenTool(PdfTool.Compress, null)
                                     HomeTool.ToImages -> onOpenTool(PdfTool.ToImages, null)
                                     HomeTool.Merge -> onOpenTool(PdfTool.Merge, null)
                                     HomeTool.Split -> onOpenTool(PdfTool.Split, null)
                                     HomeTool.ImagesToPdf -> pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                                    HomeTool.ViewDocuments -> pickDocument.launch(OfficeFormat.mimeTypes.toTypedArray())
                                 }
                             },
                             onSeeAllFiles = { vm.tab.value = MainTab.Files },
                         )
+                        MainTab.Images -> ImagesScreen(imagesVm, bottomInset, onShowFolder = vm::showInShelf)
                         MainTab.Files -> FilesScreen(vm, actions, bottomInset)
                         MainTab.Shelf -> ShelfScreen(vm, actions, dialogs, bottomInset, onChangeLocation)
                     }
@@ -142,7 +179,8 @@ fun MainShell(
                 .padding(start = 10.dp, end = 10.dp, bottom = 18.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            GlassIsland(hazeState, selected = tab, onSelect = { vm.tab.value = it })
+            // The highlight moves as soon as a swipe or tap commits to a tab.
+            GlassIsland(hazeState, selected = MainTab.entries[pager.targetPage], onSelect = { vm.tab.value = it })
             Spacer(Modifier.width(10.dp))
             GlassBubble(
                 hazeState,

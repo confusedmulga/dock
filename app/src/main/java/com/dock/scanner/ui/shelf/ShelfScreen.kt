@@ -104,7 +104,7 @@ fun ShelfScreen(
                     subtitle = when {
                         current == null -> vm.rootLabel()
                         folders.isEmpty() && files.isEmpty() -> null
-                        else -> countLabel(folders.size, files.count { it.isPdf }, files.count { it.isImage })
+                        else -> countLabel(folders.size, files.count { it.isPdf }, files.count { it.isImage }, files.count { it.isDocument })
                     },
                 ) {
                     ChromeButton(
@@ -169,6 +169,7 @@ fun ShelfScreen(
                                 current == null -> "Not in a folder"
                                 files.all { it.isImage } -> "Images"
                                 files.all { it.isPdf } -> "PDFs"
+                                files.all { it.isDocument } -> "Documents"
                                 else -> "Files"
                             },
                         )
@@ -243,8 +244,9 @@ private fun FolderTile(
     }
 }
 
-private fun countLabel(folders: Int, pdfs: Int, images: Int): String = buildList {
+private fun countLabel(folders: Int, pdfs: Int, images: Int, documents: Int): String = buildList {
     if (folders > 0) add(if (folders == 1) "1 folder" else "$folders folders")
-    if (pdfs > 0 || images == 0) add(if (pdfs == 1) "1 PDF" else "$pdfs PDFs")
+    if (pdfs > 0 || images + documents == 0) add(if (pdfs == 1) "1 PDF" else "$pdfs PDFs")
+    if (documents > 0) add(if (documents == 1) "1 document" else "$documents documents")
     if (images > 0) add(if (images == 1) "1 image" else "$images images")
 }.joinToString(" · ")

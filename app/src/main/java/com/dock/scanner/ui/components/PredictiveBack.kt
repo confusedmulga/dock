@@ -2,10 +2,14 @@ package com.dock.scanner.ui.components
 
 import androidx.compose.animation.AnimatedContentScope
 import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.BoundsTransform
 import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.ExperimentalAnimationApi
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
@@ -16,8 +20,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -106,7 +113,57 @@ fun AnimatedContentScope.BackSwipe(nav: NavController, entry: NavBackStackEntry,
                     clip = true
                 }
             },
-    ) { content() }
+    ) {
+        CompositionLocalProvider(LocalScreenAnimation provides this@BackSwipe, content = content)
+    }
+}
+
+/** The layout that runs shared element transitions between screens; null outside it (e.g. in previews). */
+@OptIn(ExperimentalSharedTransitionApi::class)
+val LocalSharedTransitions = staticCompositionLocalOf<SharedTransitionScope?> { null }
+
+/** Which tab a list of PDFs is on, for [SharedKeys.pdf]. */
+val LocalSharedOrigin = staticCompositionLocalOf { "" }
+
+/** The current screen's enter/exit animation, which its shared elements follow. Provided by [BackSwipe]. */
+val LocalScreenAnimation = compositionLocalOf<AnimatedVisibilityScope?> { null }
+
+/** Shared element keys, so both ends of a transition name things the same way. */
+object SharedKeys {
+    /**
+     * A PDF's first page: its thumbnail in a list, the page in the viewer. [origin] is the tab
+     * the list is on: the pager keeps neighbouring tabs composed, so the same PDF can be on
+     * screen twice and each copy needs its own key.
+     */
+    fun pdf(documentId: String, origin: String) = "pdf/$origin/$documentId"
+
+    /** A scanned page: its card in Review, the page in the editor. */
+    fun page(pageId: String) = "page/$pageId"
+}
+
+/**
+ * Growing means a screen is opening (a thumbnail becomes the full page): same motion as the
+ * screen sliding in. Shrinking means going back, which the predictive back gesture seeks, so
+ * it moves linearly and tracks the finger.
+ */
+@OptIn(ExperimentalSharedTransitionApi::class)
+private val SharedBounds = BoundsTransform { initial, target ->
+    tween(SCREEN_MS, easing = if (target.width < initial.width) LinearEasing else EmphasizedDecelerate)
+}
+
+/**
+ * Pairs this element with the element of the same [key] on the screen being opened or closed:
+ * during the change it moves and resizes from one to the other, following the back gesture
+ * too. Does nothing when there's no matching element (e.g. the list was scrolled away).
+ */
+@OptIn(ExperimentalSharedTransitionApi::class)
+@Composable
+fun Modifier.sharedPage(key: String): Modifier {
+    val shared = LocalSharedTransitions.current ?: return this
+    val screen = LocalScreenAnimation.current ?: return this
+    return with(shared) {
+        this@sharedPage.sharedElement(rememberSharedContentState(key), screen, boundsTransform = SharedBounds)
+    }
 }
 
 /** Remembers where the finger let go so the commit animation continues from there without a jump. */

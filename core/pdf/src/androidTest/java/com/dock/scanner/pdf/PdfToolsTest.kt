@@ -88,6 +88,33 @@ class PdfToolsTest {
     }
 
     @Test
+    fun compressToSizeFitsTheTargetAsSharplyAsPossible() {
+        val input = photoPdf("photos.pdf", pages = 2)
+        val target = input.length() / 5
+        val output = File(dir, "target.pdf")
+        val result = PdfTools.compressToSize(input, output, target)
+        assertTrue("expected under $target: $result", result.reachedTarget && output.length() <= target)
+        assertEquals(output.length(), result.result.compressedBytes)
+        assertEquals(2, PdfTools.pageCount(output))
+        // The next sharper step must have been too big, or this is the sharpest there is.
+        val index = PdfTools.SIZE_STEPS.indexOf(result.settings)
+        if (index > 0) {
+            val sharper = File(dir, "sharper.pdf")
+            assertTrue(PdfTools.compress(input, sharper, PdfTools.SIZE_STEPS[index - 1]).compressedBytes > target)
+        }
+    }
+
+    @Test
+    fun compressToSizeFallsBackToTheSmallestResult() {
+        val input = photoPdf("photos.pdf", pages = 1)
+        val output = File(dir, "tiny.pdf")
+        val result = PdfTools.compressToSize(input, output, targetBytes = 1)
+        assertTrue(!result.reachedTarget)
+        assertEquals(PdfTools.SIZE_STEPS.last(), result.settings)
+        assertTrue(output.length() in 1 until input.length())
+    }
+
+    @Test
     fun mergeAppendsInOrder() {
         val a = photoPdf("a.pdf", 2)
         val b = photoPdf("b.pdf", 1)

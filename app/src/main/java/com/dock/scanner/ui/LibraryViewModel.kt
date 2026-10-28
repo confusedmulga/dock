@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
@@ -35,9 +36,13 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
 
     private val reload = MutableStateFlow(0)
 
-    /** Every PDF, newest first; null while the first load runs. */
-    val allPdfs: StateFlow<List<LibraryItem>?> = combine(_root, reload) { root, _ -> root }
-        .mapLatest { root -> root?.let { withContext(Dispatchers.IO) { runCatching { library.allPdfs(it) }.getOrDefault(emptyList()) } } }
+    /** Every PDF and document, newest first; null while the first load runs. */
+    val allFiles: StateFlow<List<LibraryItem>?> = combine(_root, reload) { root, _ -> root }
+        .mapLatest { root -> root?.let { withContext(Dispatchers.IO) { runCatching { library.allFiles(it) }.getOrDefault(emptyList()) } } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /** Just the PDFs, for the PDF tools. */
+    val allPdfs: StateFlow<List<LibraryItem>?> = allFiles.map { files -> files?.filter { it.isPdf } }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /** Folders open on the Shelf, outermost first. Empty = the Dock folder itself. */
@@ -86,7 +91,12 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     private val _viewing = MutableStateFlow<LibraryItem?>(null)
     val viewing: StateFlow<LibraryItem?> = _viewing.asStateFlow()
 
+    /** The tab the viewed file was opened from, so its page morphs back into the right thumbnail. */
+    var viewingFrom: String = ""
+        private set
+
     fun view(item: LibraryItem) {
+        viewingFrom = tab.value.name
         _viewing.value = item
         viewModelScope.launch { _viewing.value = withFolderName(item) }
     }

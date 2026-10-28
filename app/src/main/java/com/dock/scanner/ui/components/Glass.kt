@@ -116,6 +116,7 @@ fun StatusBarBlur(state: HazeState, modifier: Modifier = Modifier) {
 
 enum class MainTab(val label: String, @param:DrawableRes val icon: Int, @param:DrawableRes val activeIcon: Int) {
     Home("Home", R.drawable.ic_home_outline, R.drawable.ic_home),
+    Images("Images", R.drawable.ic_image_outline, R.drawable.ic_image),
     Files("Files", R.drawable.ic_doc_outline, R.drawable.ic_doc),
     Shelf("Shelf", R.drawable.ic_folder_outline, R.drawable.ic_folder),
 }

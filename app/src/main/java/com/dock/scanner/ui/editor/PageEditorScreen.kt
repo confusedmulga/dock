@@ -35,6 +35,8 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -61,6 +63,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -83,7 +86,12 @@ import com.dock.scanner.data.Page
 import com.dock.scanner.data.Paper
 import com.dock.scanner.data.StrokeKind
 import com.dock.scanner.ui.ScanViewModel
+import com.dock.scanner.ui.components.SharedKeys
+import com.dock.scanner.ui.components.ZoomState
+import com.dock.scanner.ui.components.ZoomableBox
+import com.dock.scanner.ui.components.sharedPage
 import com.dock.scanner.ui.theme.DockMotion
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 /** The editor's tools, in toolbar order. */
@@ -114,15 +122,21 @@ fun PageEditorScreen(
 ) {
     val all by vm.pages.collectAsStateWithLifecycle()
     val sheets by vm.sheets.collectAsStateWithLifecycle()
-    // The page strip switches pages here, without leaving the editor.
-    var currentId by rememberSaveable { mutableStateOf(pageId) }
-    val index = sheets.indexOfFirst { it.id == currentId }
-    if (index < 0) {
+    val scope = rememberCoroutineScope()
+    // Pages swipe sideways; the page strip jumps between them.
+    val pager = rememberPagerState(initialPage = sheets.indexOfFirst { it.id == pageId }.coerceAtLeast(0)) { sheets.size }
+    if (sheets.isEmpty()) {
         LaunchedEffect(Unit) { onBack() }
         return
     }
+    // Right after a delete the pager can still point one past the end.
+    val index = pager.currentPage.coerceIn(0, sheets.lastIndex)
     val page = sheets[index]
     val pagesById = remember(all) { all.associateBy { it.id } }
+    val zooms = remember { HashMap<String, ZoomState>() }
+    fun zoomOf(id: String) = zooms.getOrPut(id) { ZoomState() }
+    // A page that's been swiped away starts unzoomed next time.
+    LaunchedEffect(pager.settledPage) { zooms.filterKeys { it != sheets.getOrNull(pager.settledPage)?.id }.values.forEach(ZoomState::reset) }
 
     var tool by rememberSaveable { mutableStateOf<EditorTool?>(null) }
     BackHandler(enabled = tool != null) { tool = null }
@@ -158,13 +172,8 @@ fun PageEditorScreen(
             )
             if (page.processing) CircularProgressIndicator(Modifier.size(20.dp).padding(end = 4.dp), strokeWidth = 2.dp)
             if (tool == null) {
-                IconButton(onClick = {
-                    // Land on the neighbouring page; leave only when this was the last one.
-                    val next = sheets.getOrNull(index + 1) ?: sheets.getOrNull(index - 1)
-                    if (next != null) currentId = next.id
-                    vm.delete(page.id)
-                    if (next == null) onBack()
-                }) { Icon(Icons.Filled.Delete, contentDescription = "Delete page") }
+                // The pager then shows the next page (or the previous one, after the last); the editor closes with the last page.
+                IconButton(onClick = { vm.delete(page.id) }) { Icon(Icons.Filled.Delete, contentDescription = "Delete page") }
             }
         }
 
@@ -178,42 +187,59 @@ fun PageEditorScreen(
             return@Column
         }
 
-        Box(Modifier.weight(1f).fillMaxWidth()) {
-            val layout = page.layout
-            if (tool == EditorTool.Adjust && layout != null) {
+        val input = when {
+            picking -> CanvasInput.Pick
+            tool == EditorTool.Eraser -> CanvasInput.Draw(StrokeKind.ERASER, eraserColor, eraserWidth)
+            tool == EditorTool.Markup -> CanvasInput.Draw(
+                StrokeKind.PEN,
+                Color(penColor).copy(alpha = penOpacity).toArgb(),
+                penWidth,
+            )
+            else -> CanvasInput.None
+        }
+        HorizontalPager(
+            state = pager,
+            key = { sheets[it].id },
+            // Swiping is for looking through pages: tools that draw on or arrange the page keep it still.
+            userScrollEnabled = input == CanvasInput.None && tool != EditorTool.Adjust && !zoomOf(page.id).zoomed,
+            pageSpacing = 8.dp,
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+        ) { i ->
+            val p = sheets.getOrNull(i) ?: return@HorizontalPager
+            val current = i == index
+            // Only the open page morphs from and back into its card in Review.
+            val shared = if (current) Modifier.sharedPage(SharedKeys.page(p.id)) else Modifier
+            val layout = p.layout
+            if (current && tool == EditorTool.Adjust && layout != null) {
                 SheetEditor(
                     layout = layout,
                     pages = pagesById,
                     selectedId = selectedOnSheet,
                     onSelect = { selectedOnSheet = it },
-                    onChange = { vm.updatePlacement(page.id, it) },
+                    onChange = { vm.updatePlacement(p.id, it) },
                 )
-            } else if (layout != null && tool == null) {
+            } else if (layout != null && (tool == null || !current)) {
                 // Pages on a sheet are shown on their sheet.
-                Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-                    SheetView(layout, pagesById, Modifier.graphicsLayer { shadowElevation = 16f })
+                ZoomableBox(zoomOf(p.id), Modifier.fillMaxSize()) {
+                    Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                        SheetView(layout, pagesById, shared.graphicsLayer { shadowElevation = 16f })
+                    }
                 }
             } else {
-                PageCanvas(
-                    page = page,
-                    brightness = brightness,
-                    contrast = contrast,
-                    input = when {
-                        picking -> CanvasInput.Pick
-                        tool == EditorTool.Eraser -> CanvasInput.Draw(StrokeKind.ERASER, eraserColor, eraserWidth)
-                        tool == EditorTool.Markup -> CanvasInput.Draw(
-                            StrokeKind.PEN,
-                            Color(penColor).copy(alpha = penOpacity).toArgb(),
-                            penWidth,
-                        )
-                        else -> CanvasInput.None
-                    },
-                    onStroke = { vm.addStroke(page.id, it) },
-                    onPick = {
-                        eraserColor = it
-                        picking = false
-                    },
-                )
+                ZoomableBox(zoomOf(p.id), Modifier.fillMaxSize(), oneFingerPan = !current || input == CanvasInput.None) {
+                    PageCanvas(
+                        page = p,
+                        brightness = if (current) brightness else p.brightness,
+                        contrast = if (current) contrast else p.contrast,
+                        pageModifier = shared,
+                        input = if (current) input else CanvasInput.None,
+                        onStroke = { vm.addStroke(p.id, it) },
+                        onPick = {
+                            eraserColor = it
+                            picking = false
+                        },
+                    )
+                }
             }
         }
 
@@ -228,9 +254,9 @@ fun PageEditorScreen(
                         sheets = sheets,
                         pagesById = pagesById,
                         currentId = page.id,
-                        onSelect = {
+                        onSelect = { id ->
                             picking = false
-                            currentId = it
+                            scope.launch { pager.animateScrollToPage(sheets.indexOfFirst { it.id == id }.coerceAtLeast(0)) }
                         },
                     )
                 }

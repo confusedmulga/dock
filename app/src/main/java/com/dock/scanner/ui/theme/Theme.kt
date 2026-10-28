@@ -168,6 +168,8 @@ enum class ToolAccent(val light: Accent, val dark: Accent) {
     Merge(light = Accent(Color(0xFFFDD6FF), Color(0xFF871AA3)), dark = Accent(Color(0xFF790096), Color(0xFFF8C3FF))),
     Split(light = Accent(Color(0xFFFFDCC2), Color(0xFF7E4300)), dark = Accent(Color(0xFF6D3A00), Color(0xFFFFCAA0))),
     ImagesToPdf(light = Accent(Color(0xFF98F994), Color(0xFF006017)), dark = Accent(Color(0xFF005313), Color(0xFF8AEA87))),
+    Documents(light = Accent(Color(0xFFA6EEFF), Color(0xFF00626F)), dark = Accent(Color(0xFF004F59), Color(0xFF83D2E3))),
+    Resize(light = Accent(Color(0xFFDEE0FF), Color(0xFF3E4A9C)), dark = Accent(Color(0xFF253283), Color(0xFFBAC3FF))),
 }
 
 @Composable

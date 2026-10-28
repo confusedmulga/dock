@@ -61,6 +61,7 @@ enum class HomeTool(val title: String, val description: String, @param:DrawableR
     Merge("Merge PDFs", "Combine several PDFs into one", R.drawable.ic_merge, ToolAccent.Merge),
     Split("Split PDF", "Pull out pages or ranges into separate PDFs", R.drawable.ic_split, ToolAccent.Split),
     ImagesToPdf("Images to PDF", "Turn photos from your gallery into a PDF", R.drawable.ic_pdf, ToolAccent.ImagesToPdf),
+    ViewDocuments("View documents", "Open Word, Excel, PowerPoint and other files", R.drawable.ic_article, ToolAccent.Documents),
 }
 
 @Composable
@@ -71,8 +72,8 @@ fun HomeScreen(
     onTool: (HomeTool) -> Unit,
     onSeeAllFiles: () -> Unit,
 ) {
-    val pdfs by vm.allPdfs.collectAsStateWithLifecycle()
-    val recent = pdfs.orEmpty().take(3)
+    val files by vm.allFiles.collectAsStateWithLifecycle()
+    val recent = files.orEmpty().take(3)
     val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val gridTools = remember { HomeTool.entries.drop(1).chunked(2) }
 

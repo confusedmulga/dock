@@ -1,5 +1,6 @@
 package com.dock.scanner.ui.editor
 
+import coil3.compose.AsyncImage
 import androidx.compose.ui.draw.clip
 import androidx.compose.material3.MaterialTheme
 import android.graphics.Bitmap
@@ -74,6 +75,8 @@ fun PageCanvas(
     brightness: Float,
     contrast: Float,
     modifier: Modifier = Modifier,
+    /** Applied to the page itself rather than the whole canvas, e.g. for a shared element transition. */
+    pageModifier: Modifier = Modifier,
     input: CanvasInput = CanvasInput.None,
     onStroke: (InkStroke) -> Unit = {},
     onPick: (Int) -> Unit = {},
@@ -98,6 +101,7 @@ fun PageCanvas(
                 .offset { IntOffset(((boxW - w) / 2).roundToInt(), ((boxH - h) / 2).roundToInt()) }
                 .size(with(density) { DpSize(w.toDp(), h.toDp()) })
                 .align(Alignment.TopStart)
+                .then(pageModifier)
                 .shadow(6.dp, MaterialTheme.shapes.extraSmall)
                 .clip(MaterialTheme.shapes.extraSmall)
                 // One handler for both modes: two separate detectors would fight over who
@@ -130,6 +134,11 @@ fun PageCanvas(
                                 var last = down.position
                                 while (true) {
                                     val event = awaitPointerEvent()
+                                    // A second finger means zooming, not ink: drop the stroke.
+                                    if (event.changes.count { it.pressed } > 1) {
+                                        live.clear()
+                                        break
+                                    }
                                     val change = event.changes.firstOrNull { it.id == down.id } ?: break
                                     if (!change.pressed) break
                                     if (hypot(change.position.x - last.x, change.position.y - last.y) > 1.5f) {
@@ -165,9 +174,12 @@ fun PageCanvas(
                         drawInk(InkStroke(mode.kind, live.toList(), mode.color, mode.width))
                     }
                 }
+            } else if (page.output != null) {
+                // The finished page (as on the Review card) until the editable bitmap is decoded.
+                AsyncImage(model = page.output, contentDescription = "Page", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             }
         }
-        if (bitmap == null) CircularProgressIndicator()
+        if (bitmap == null && page.output == null) CircularProgressIndicator()
     }
 }
 

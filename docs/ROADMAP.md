@@ -50,7 +50,7 @@ No database to get out of sync.
 - [x] Built-in PDF viewer
 - [x] Design pass with the apple-design skill: large tight titles, springs, glass chrome
 - [ ] Keep an unsaved scan across process death (draft session on disk)
-- [ ] Swipe between pages in the editor (the page strip covers switching for now)
+- [x] Swipe between pages in the editor, with pinch / double-tap zoom (swiping pauses while zoomed or drawing)
 - [ ] Add pages to an existing PDF
 - [ ] Delete with undo instead of a confirmation dialog
 - [ ] Move UI strings to `strings.xml` (ready for translations)
@@ -79,7 +79,7 @@ previewed live with the same math.
 - [x] Predictive back: every screen slides right as one card while the gesture is held (up to 90%),
       the previous screen slides in underneath; release finishes, cancel springs back
 - [ ] Auto filter washes out large dark color blocks (e.g. a card's blue header); use Original for those for now
-- [ ] Pinch-zoom while drawing for precise erasing
+- [x] Pinch-zoom while drawing for precise erasing (two fingers zoom, one finger draws)
 - [ ] Strokes stay put on rotate, but not when the crop changes afterwards
 
 ## Phase 2.6: PDF tools ← we are here
@@ -97,7 +97,21 @@ operations that must keep text and vectors, Android's PdfRenderer for page rende
 - [x] Shelf shows image files with thumbnails; Files ⋯ menu has Edit / Compress / Convert / Split
 - [x] Predictive back zooms out to 75% while sliding
 - [x] Viewer: pinch / double-tap zoom with panning; name dropdown with Rename, folder (shown in blue, tap to change, or create a new one), Edit pages, Compress, Delete
-- [ ] **Your test on a real phone** ← next step
+- [x] Shared element transitions: a PDF's thumbnail grows into the viewer's first page, a Review card into the editor's page, and both follow the predictive back gesture
+- [x] Tools open on a list of the PDFs in Dock (numbered in pick order for Merge / PDF to images); **Add files** reaches the rest of the phone. Edit PDF uses the same list
+- [x] Compress to a target size: the sharpest of 14 DPI/quality steps that fits, found by binary search (≤ 4 passes)
+- [x] Scan quality setting in the camera: **Standard** (default; 300 dpi on A4, JPEG 85) or **Original** (full resolution, JPEG 100 with full color detail, gallery JPEGs kept byte for byte)
+- [x] Camera focus: tap shows a focus circle with a lens slider beside it (follows autofocus until dragged);
+      **Auto / Manual** switch, where Manual holds the lens at one distance; back to Auto forgets it
+- [x] Camera modes: **Auto edges** (finds and crops to the page) or **Standard** (keeps the whole 4:3 frame;
+      the crop tool's "Auto" still offers the edges). The choice is remembered
+- [x] **Images** tab: the reduceimages.com resizer (percent / px / cm / in, aspect lock, DPI, stretch / crop / fit,
+      JPG / PNG / GIF, quality, background); several images at once go into their own folder
+- [x] The island's tabs swipe sideways (pager with braim's spring)
+- [x] Document preview for Word, Excel, PowerPoint, OpenDocument, RTF, CSV and text files (`core:office`),
+      in Files / Shelf / Recent, the "View documents" tool, and "Open with Dock" from other apps
+- [ ] **Your test on a real phone** ← next step (manual focus especially: the emulator's lens isn't real)
+- [ ] Legacy .doc files show their text without formatting
 - [ ] Editing a text-based PDF turns its pages into images (text stops being selectable) — keep text layers when only pages are reordered/deleted
 - [ ] Password-protected PDFs (needs BouncyCastle, left out to save size)
 - [ ] Faster cold start: profile first composition, Baseline Profiles

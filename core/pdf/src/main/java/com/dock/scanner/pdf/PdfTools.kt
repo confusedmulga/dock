@@ -18,6 +18,7 @@ import java.io.File
 import java.io.IOException
 import java.util.IdentityHashMap
 import kotlin.math.ceil
+import kotlin.math.log2
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -124,6 +125,57 @@ object PdfTools {
             doc.save(output)
         }
         return CompressResult(input.length(), output.length(), changed)
+    }
+
+    /** Settings tried when aiming for a file size, sharpest (largest file) first. */
+    val SIZE_STEPS = listOf(
+        CompressSettings(300, 0.9f), CompressSettings(250, 0.85f), CompressSettings(200, 0.8f),
+        CompressSettings(170, 0.75f), CompressSettings(150, 0.7f), CompressSettings(130, 0.65f),
+        CompressSettings(120, 0.6f), CompressSettings(110, 0.55f), CompressSettings(100, 0.5f),
+        CompressSettings(90, 0.45f), CompressSettings(80, 0.4f), CompressSettings(72, 0.35f),
+        CompressSettings(60, 0.3f), CompressSettings(50, 0.25f),
+    )
+
+    /** @param reachedTarget false when even the smallest settings couldn't get under the target. */
+    data class TargetResult(val result: CompressResult, val settings: CompressSettings, val reachedTarget: Boolean)
+
+    /**
+     * Compresses to the sharpest of [SIZE_STEPS] whose result fits in [targetBytes]. Each step
+     * gives a file no larger than the one before, so a binary search finds it in at most four
+     * passes. If none fits, [output] holds the smallest result.
+     */
+    fun compressToSize(input: File, output: File, targetBytes: Long, onProgress: (Float) -> Unit = {}): TargetResult {
+        val attempt = File(output.parentFile, "attempt-" + output.name)
+        val passes = ceil(log2(SIZE_STEPS.size + 1.0)).toInt()
+        var pass = 0
+        var low = 0
+        var high = SIZE_STEPS.lastIndex
+        var fits: Pair<Int, CompressResult>? = null
+        var smallest: Pair<Int, CompressResult>? = null
+        try {
+            while (low <= high) {
+                val mid = (low + high) / 2
+                val result = compress(input, attempt, SIZE_STEPS[mid]) { onProgress((pass + it) / passes) }
+                pass++
+                if (result.compressedBytes <= targetBytes) {
+                    attempt.copyTo(output, overwrite = true)
+                    fits = mid to result
+                    high = mid - 1
+                } else {
+                    // Kept only until something fits.
+                    if (fits == null && (smallest == null || result.compressedBytes < smallest.second.compressedBytes)) {
+                        attempt.copyTo(output, overwrite = true)
+                        smallest = mid to result
+                    }
+                    low = mid + 1
+                }
+            }
+        } finally {
+            attempt.delete()
+        }
+        onProgress(1f)
+        val (index, result) = fits ?: smallest!!
+        return TargetResult(result, SIZE_STEPS[index], reachedTarget = fits != null)
     }
 
     private fun shrinkImages(

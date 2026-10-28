@@ -5,6 +5,7 @@ import android.net.Uri
 import android.provider.DocumentsContract
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.dock.scanner.DockApp
 import com.dock.scanner.core.DocumentDetector
 import com.dock.scanner.core.JpegPdfWriter
 import com.dock.scanner.core.PageFilter
@@ -17,6 +18,8 @@ import com.dock.scanner.data.Page
 import com.dock.scanner.data.PageCompositor
 import com.dock.scanner.data.Paper
 import com.dock.scanner.data.Placement
+import com.dock.scanner.data.ScanMode
+import com.dock.scanner.data.ScanQuality
 import com.dock.scanner.data.SheetLayout
 import com.dock.scanner.data.StrokeKind
 import com.dock.scanner.data.storage.DockLibrary
@@ -103,12 +106,36 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     private val _events = Channel<UiEvent>(Channel.BUFFERED)
     val events = _events.receiveAsFlow()
 
+    private val settings = (app as DockApp).settings
+
+    /** Scan quality for new pages; changing it re-renders the pages already in the session. */
+    private val _quality = MutableStateFlow(settings.scanQuality)
+    val quality: StateFlow<ScanQuality> = _quality.asStateFlow()
+
+    fun setQuality(quality: ScanQuality) {
+        settings.scanQuality = quality
+        _quality.value = quality
+        _pages.value.forEach { page -> edit(page.id) { it.copy(quality = quality) } }
+    }
+
+    /** Whether camera photos are cropped to the page's edges or kept whole. */
+    private val _scanMode = MutableStateFlow(settings.scanMode)
+    val scanMode: StateFlow<ScanMode> = _scanMode.asStateFlow()
+
+    fun setScanMode(mode: ScanMode) {
+        settings.scanMode = mode
+        _scanMode.value = mode
+    }
+
     fun newCaptureFile(): File = File(sessionDir, "src_${UUID.randomUUID()}.jpg")
 
     // region Adding pages
 
-    /** Adds a photo that is already on disk (camera capture or import), detects edges and renders it. */
-    fun addPhoto(file: File, seq: Long = sequence.incrementAndGet()) {
+    /**
+     * Adds a photo that is already on disk (camera capture or import), detects edges and renders it.
+     * Without [cropToEdges] the whole photo is kept; the edges found are still offered by the crop tool.
+     */
+    fun addPhoto(file: File, seq: Long = sequence.incrementAndGet(), cropToEdges: Boolean = true) {
         viewModelScope.launch {
             val page = withContext(worker) {
                 runCatching {
@@ -120,10 +147,11 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
                         source = file,
                         sourceWidth = w,
                         sourceHeight = h,
-                        quad = detected ?: Quad.FULL,
+                        quad = detected?.takeIf { cropToEdges } ?: Quad.FULL,
                         detectedQuad = detected,
                         filter = PageFilter.AUTO,
                         rotation = 0,
+                        quality = _quality.value,
                     )
                 }.getOrNull()
             }
@@ -144,7 +172,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
             viewModelScope.launch {
                 val file = newCaptureFile()
                 val ok = withContext(Dispatchers.IO) {
-                    runCatching { ImageImport.copyAsUprightJpeg(resolver, uri, file) }.isSuccess
+                    runCatching { ImageImport.copyAsUprightJpeg(resolver, uri, file, _quality.value) }.isSuccess
                 }
                 if (ok) addPhoto(file, seq) else message("Couldn't import an image")
             }
@@ -155,7 +183,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
      * Replaces a page's photo with a new capture. Filter and brightness carry over; the crop is
      * detected again, and strokes are dropped because they were drawn on the old photo.
      */
-    fun retakePhoto(id: String, file: File) {
+    fun retakePhoto(id: String, file: File, cropToEdges: Boolean = true) {
         viewModelScope.launch {
             val info = withContext(worker) {
                 runCatching {
@@ -175,7 +203,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
                     source = file,
                     sourceWidth = size.first,
                     sourceHeight = size.second,
-                    quad = detected ?: Quad.FULL,
+                    quad = detected?.takeIf { cropToEdges } ?: Quad.FULL,
                     detectedQuad = detected,
                     rotation = 0,
                     strokes = emptyList(),
@@ -187,26 +215,28 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Loads every page of a PDF into the session as an editable page (rendered at 200 dpi),
-     * so it can be edited with the same tools as a scan.
+     * Loads every page of a PDF into the session as an editable page (rendered at 200 dpi, or
+     * 300 at Original quality), so it can be edited with the same tools as a scan.
      */
     fun openPdf(uri: Uri, item: LibraryItem?, onReady: () -> Unit) {
         if (_opening.value != null) return
         clear()
         _opening.value = 0f
         val resolver = getApplication<Application>().contentResolver
+        val quality = _quality.value
         viewModelScope.launch {
             try {
                 val name = item?.displayName ?: withContext(Dispatchers.IO) { PdfSources.describe(resolver, uri).name }
                 val pages = withContext(Dispatchers.IO) {
                     PdfSources.withRenderer(resolver, uri) { renderer ->
                         List(renderer.pageCount) { index ->
-                            val (bitmap, size) = PdfSources.render(renderer, index, dpi = 200, maxSide = 2800)
+                            val (bitmap, size) = PdfSources.render(renderer, index, quality.pdfDpi, quality.pdfMaxSide)
                             val width = bitmap.width
                             val height = bitmap.height
                             val file = newCaptureFile()
                             try {
-                                file.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, it) }
+                                val jpegQuality = if (quality == ScanQuality.Original) 100 else 92
+                                file.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, jpegQuality, it) }
                             } finally {
                                 bitmap.recycle()
                             }
@@ -222,6 +252,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
                                 filter = PageFilter.ORIGINAL,
                                 rotation = 0,
                                 pdfPageSize = size,
+                                quality = quality,
                             )
                         }
                     }
@@ -573,14 +604,21 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
                     var height = page.outputHeight
                     if (base == null || page.baseKey != page.renderKey || !base.exists()) {
                         base = File(sessionDir, "base_${id}_$revision.jpg").also(created::add)
-                        val size = PageProcessor.process(page.source, page.quad, page.filter, page.rotation, base)
+                        val size = PageProcessor.process(
+                            page.source, page.quad, page.filter, page.rotation, base,
+                            maxSide = page.quality.maxSide,
+                            jpegQuality = page.quality.jpegQuality,
+                        )
                         width = size.first
                         height = size.second
                     }
                     val output = if (PageCompositor.needsCompositing(page)) {
                         File(sessionDir, "page_${id}_$revision.jpg").also {
                             created += it
-                            PageCompositor.compose(base, page.brightness, page.contrast, page.strokes, it)
+                            PageCompositor.compose(
+                                base, page.brightness, page.contrast, page.strokes, it,
+                                jpegQuality = maxOf(88, page.quality.jpegQuality),
+                            )
                         }
                     } else {
                         base

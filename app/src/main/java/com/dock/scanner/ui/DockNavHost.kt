@@ -1,12 +1,14 @@
 package com.dock.scanner.ui
 
-import android.net.Uri
 import android.widget.Toast
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -26,6 +28,7 @@ import com.dock.scanner.ui.tools.ToolScreen
 import com.dock.scanner.ui.tools.ToolsViewModel
 import androidx.compose.foundation.layout.fillMaxWidth
 import com.dock.scanner.ui.components.BackSwipe
+import com.dock.scanner.ui.components.LocalSharedTransitions
 import com.dock.scanner.ui.components.popEnter
 import com.dock.scanner.ui.components.popExit
 import com.dock.scanner.ui.components.pushEnter
@@ -33,6 +36,7 @@ import com.dock.scanner.ui.components.pushExit
 import com.dock.scanner.ui.editor.PageEditorScreen
 import com.dock.scanner.ui.main.MainShell
 import com.dock.scanner.ui.onboarding.StorageSetupScreen
+import com.dock.scanner.ui.preview.DocumentPreviewScreen
 import com.dock.scanner.ui.review.ReviewScreen
 import com.dock.scanner.ui.viewer.PdfViewerScreen
 
@@ -44,11 +48,13 @@ private object Routes {
     const val REVIEW = "review"
     const val PAGE = "page/{id}"
     const val VIEWER = "viewer"
+    const val DOCUMENT = "document"
     const val TOOL = "tool"
     fun camera(retakePageId: String? = null) = if (retakePageId == null) "camera" else "camera?retake=$retakePageId"
     fun page(id: String) = "page/$id"
 }
 
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun DockNavHost() {
     val nav = rememberNavController()
@@ -116,136 +122,160 @@ fun DockNavHost() {
         )
     }
 
-    NavHost(
-        navController = nav,
-        startDestination = start,
-        enterTransition = pushEnter,
-        exitTransition = pushExit,
-        popEnterTransition = popEnter,
-        popExitTransition = popExit,
-    ) {
-        composable(Routes.SETUP) { entry ->
-            BackSwipe(nav, entry) {
-                StorageSetupScreen(
-                    libraryVm,
-                    isChange = false,
-                    onDone = { nav.navigate(Routes.MAIN) { popUpTo(Routes.SETUP) { inclusive = true } } },
-                    onCancel = {},
-                )
-            }
-        }
-        composable(Routes.CHANGE_FOLDER) { entry ->
-            BackSwipe(nav, entry) {
-                StorageSetupScreen(libraryVm, isChange = true, onDone = { nav.popBackStack() }, onCancel = { nav.popBackStack() })
-            }
-        }
-        composable(Routes.MAIN) { entry ->
-            BackSwipe(nav, entry) {
-                MainShell(
-                    vm = libraryVm,
-                    onScan = { folderId ->
-                        scanVm.targetFolderId = folderId
-                        nav.navigate(Routes.camera())
-                    },
-                    onOpenPdf = {
-                        libraryVm.view(it)
-                        nav.navigate(Routes.VIEWER)
-                    },
-                    onEditPdf = { uri, item ->
-                        newSession {
-                            scanVm.targetFolderId = item?.parentId
-                            scanVm.openPdf(uri, item) { nav.navigate(Routes.REVIEW) }
-                        }
-                    },
-                    onImagesPicked = { uris ->
-                        newSession {
-                            scanVm.clear()
-                            scanVm.importImages(uris)
-                            nav.navigate(Routes.REVIEW)
-                        }
-                    },
-                    onOpenTool = { tool, item ->
-                        toolsVm.start(tool, item)
-                        nav.navigate(Routes.TOOL)
-                    },
-                    onChangeLocation = { nav.navigate(Routes.CHANGE_FOLDER) },
-                )
-            }
-        }
-        composable(
-            Routes.CAMERA,
-            arguments = listOf(navArgument("retake") { type = NavType.StringType; nullable = true; defaultValue = null }),
-        ) { entry ->
-            val retake = entry.arguments?.getString("retake")
-            BackSwipe(nav, entry) {
-                CameraScreen(vm = scanVm, retakePageId = retake, onDone = {
-                    when {
-                        retake != null -> nav.popBackStack()
-                        // Came from Review to add pages: just go back to it.
-                        nav.previousBackStackEntry?.destination?.route == Routes.REVIEW -> nav.popBackStack()
-                        scanVm.pages.value.isEmpty() -> nav.popBackStack()
-                        else -> nav.navigate(Routes.REVIEW) { popUpTo(Routes.CAMERA) { inclusive = true } }
+    // Pages and thumbnails morph between screens (list → viewer, Review → editor).
+    SharedTransitionLayout {
+        CompositionLocalProvider(LocalSharedTransitions provides this) {
+            NavHost(
+                navController = nav,
+                startDestination = start,
+                enterTransition = pushEnter,
+                exitTransition = pushExit,
+                popEnterTransition = popEnter,
+                popExitTransition = popExit,
+            ) {
+                composable(Routes.SETUP) { entry ->
+                    BackSwipe(nav, entry) {
+                        StorageSetupScreen(
+                            libraryVm,
+                            isChange = false,
+                            onDone = { nav.navigate(Routes.MAIN) { popUpTo(Routes.SETUP) { inclusive = true } } },
+                            onCancel = {},
+                        )
                     }
-                }, onImported = {
-                    if (nav.previousBackStackEntry?.destination?.route == Routes.REVIEW) nav.popBackStack()
-                    else nav.navigate(Routes.REVIEW) { popUpTo(Routes.CAMERA) { inclusive = true } }
-                })
-            }
-        }
-        composable(Routes.REVIEW) { entry ->
-            BackSwipe(nav, entry) {
-                ReviewScreen(
-                    scanVm = scanVm,
-                    libraryVm = libraryVm,
-                    onAddPages = { nav.navigate(Routes.camera()) },
-                    onOpenPage = { nav.navigate(Routes.page(it)) },
-                    onFinished = { nav.popBackStack(Routes.MAIN, inclusive = false) },
-                )
-            }
-        }
-        composable(Routes.PAGE) { entry ->
-            BackSwipe(nav, entry) {
-                PageEditorScreen(
-                    vm = scanVm,
-                    pageId = entry.arguments?.getString("id").orEmpty(),
-                    onBack = { nav.popBackStack(Routes.REVIEW, inclusive = false) },
-                    onRetake = { nav.navigate(Routes.camera(retakePageId = it)) },
-                )
-            }
-        }
-        composable(Routes.TOOL) { entry ->
-            BackSwipe(nav, entry) {
-                ToolScreen(
-                    vm = toolsVm,
-                    initialUri = { libraryVm.root.value?.let { libraryVm.library.documentUri(it, libraryVm.library.rootId(it)) } },
-                    onBack = { nav.popBackStack() },
-                    onOpenPdf = {
-                        libraryVm.view(it)
-                        nav.navigate(Routes.VIEWER)
-                    },
-                    onShowInShelf = { folder ->
-                        libraryVm.showInShelf(folder)
-                        nav.popBackStack(Routes.MAIN, inclusive = false)
-                    },
-                )
-            }
-        }
-        composable(Routes.VIEWER) { entry ->
-            BackSwipe(nav, entry) {
-                PdfViewerScreen(
-                    vm = libraryVm,
-                    onBack = { nav.popBackStack() },
-                    onEdit = { item ->
-                        newSession {
-                            scanVm.targetFolderId = item.parentId
-                            scanVm.openPdf(item.uri, item) { nav.navigate(Routes.REVIEW) }
-                        }
-                    },
-                    onCompress = { item ->
-                        toolsVm.start(PdfTool.Compress, item)
-                        nav.navigate(Routes.TOOL)
-                    },
-                )
+                }
+                composable(Routes.CHANGE_FOLDER) { entry ->
+                    BackSwipe(nav, entry) {
+                        StorageSetupScreen(libraryVm, isChange = true, onDone = { nav.popBackStack() }, onCancel = { nav.popBackStack() })
+                    }
+                }
+                composable(Routes.MAIN) { entry ->
+                    BackSwipe(nav, entry) {
+                        MainShell(
+                            vm = libraryVm,
+                            onScan = { folderId ->
+                                scanVm.targetFolderId = folderId
+                                nav.navigate(Routes.camera())
+                            },
+                            onOpenPdf = {
+                                libraryVm.view(it)
+                                nav.navigate(Routes.VIEWER)
+                            },
+                            onOpenDocument = {
+                                libraryVm.view(it)
+                                nav.navigate(Routes.DOCUMENT)
+                            },
+                            onEditPdf = { uri, item ->
+                                newSession {
+                                    scanVm.targetFolderId = item?.parentId
+                                    scanVm.openPdf(uri, item) { nav.navigate(Routes.REVIEW) }
+                                }
+                            },
+                            onImagesPicked = { uris ->
+                                newSession {
+                                    scanVm.clear()
+                                    scanVm.importImages(uris)
+                                    nav.navigate(Routes.REVIEW)
+                                }
+                            },
+                            onOpenTool = { tool, item ->
+                                toolsVm.start(tool, item)
+                                nav.navigate(Routes.TOOL)
+                            },
+                            onChangeLocation = { nav.navigate(Routes.CHANGE_FOLDER) },
+                        )
+                    }
+                }
+                composable(
+                    Routes.CAMERA,
+                    arguments = listOf(navArgument("retake") { type = NavType.StringType; nullable = true; defaultValue = null }),
+                ) { entry ->
+                    val retake = entry.arguments?.getString("retake")
+                    BackSwipe(nav, entry) {
+                        CameraScreen(vm = scanVm, retakePageId = retake, onDone = {
+                            when {
+                                retake != null -> nav.popBackStack()
+                                // Came from Review to add pages: just go back to it.
+                                nav.previousBackStackEntry?.destination?.route == Routes.REVIEW -> nav.popBackStack()
+                                scanVm.pages.value.isEmpty() -> nav.popBackStack()
+                                else -> nav.navigate(Routes.REVIEW) { popUpTo(Routes.CAMERA) { inclusive = true } }
+                            }
+                        }, onImported = {
+                            if (nav.previousBackStackEntry?.destination?.route == Routes.REVIEW) nav.popBackStack()
+                            else nav.navigate(Routes.REVIEW) { popUpTo(Routes.CAMERA) { inclusive = true } }
+                        })
+                    }
+                }
+                composable(Routes.REVIEW) { entry ->
+                    BackSwipe(nav, entry) {
+                        ReviewScreen(
+                            scanVm = scanVm,
+                            libraryVm = libraryVm,
+                            onAddPages = { nav.navigate(Routes.camera()) },
+                            onOpenPage = { nav.navigate(Routes.page(it)) },
+                            onFinished = { nav.popBackStack(Routes.MAIN, inclusive = false) },
+                        )
+                    }
+                }
+                composable(Routes.PAGE) { entry ->
+                    BackSwipe(nav, entry) {
+                        PageEditorScreen(
+                            vm = scanVm,
+                            pageId = entry.arguments?.getString("id").orEmpty(),
+                            onBack = { nav.popBackStack(Routes.REVIEW, inclusive = false) },
+                            onRetake = { nav.navigate(Routes.camera(retakePageId = it)) },
+                        )
+                    }
+                }
+                composable(Routes.TOOL) { entry ->
+                    val pdfs by libraryVm.allPdfs.collectAsStateWithLifecycle()
+                    LaunchedEffect(Unit) { libraryVm.refresh() }
+                    BackSwipe(nav, entry) {
+                        ToolScreen(
+                            vm = toolsVm,
+                            pdfs = pdfs,
+                            initialUri = { libraryVm.root.value?.let { libraryVm.library.documentUri(it, libraryVm.library.rootId(it)) } },
+                            onBack = { nav.popBackStack() },
+                            onOpenPdf = {
+                                libraryVm.view(it)
+                                nav.navigate(Routes.VIEWER)
+                            },
+                            onShowInShelf = { folder ->
+                                libraryVm.showInShelf(folder)
+                                nav.popBackStack(Routes.MAIN, inclusive = false)
+                            },
+                            onEditPdf = { uri, item ->
+                                newSession {
+                                    scanVm.targetFolderId = item?.parentId
+                                    scanVm.openPdf(uri, item) { nav.navigate(Routes.REVIEW) { popUpTo(Routes.TOOL) { inclusive = true } } }
+                                }
+                            },
+                            onLibraryChanged = libraryVm::refresh,
+                        )
+                    }
+                }
+                composable(Routes.DOCUMENT) { entry ->
+                    BackSwipe(nav, entry) {
+                        DocumentPreviewScreen(vm = libraryVm, onBack = { nav.popBackStack() })
+                    }
+                }
+                composable(Routes.VIEWER) { entry ->
+                    BackSwipe(nav, entry) {
+                        PdfViewerScreen(
+                            vm = libraryVm,
+                            onBack = { nav.popBackStack() },
+                            onEdit = { item ->
+                                newSession {
+                                    scanVm.targetFolderId = item.parentId
+                                    scanVm.openPdf(item.uri, item) { nav.navigate(Routes.REVIEW) }
+                                }
+                            },
+                            onCompress = { item ->
+                                toolsVm.start(PdfTool.Compress, item)
+                                nav.navigate(Routes.TOOL)
+                            },
+                        )
+                    }
+                }
             }
         }
     }
