@@ -78,6 +78,7 @@ fun MainShell(
     onImagesPicked: (List<Uri>) -> Unit,
     onOpenTool: (PdfTool, LibraryItem?) -> Unit,
     onChangeLocation: () -> Unit,
+    onAbout: () -> Unit,
 ) {
     val context = LocalContext.current
     val tab by vm.tab.collectAsStateWithLifecycle()
@@ -161,6 +162,7 @@ fun MainShell(
                                 }
                             },
                             onSeeAllFiles = { vm.tab.value = MainTab.Files },
+                            onAbout = onAbout,
                         )
                         MainTab.Images -> ImagesScreen(imagesVm, bottomInset, onShowFolder = vm::showInShelf)
                         MainTab.Files -> FilesScreen(vm, actions, bottomInset)

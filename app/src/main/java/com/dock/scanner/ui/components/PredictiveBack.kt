@@ -33,7 +33,7 @@ import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavController
 
 /** One duration for every screen change, so forward and back feel like the same motion reversed. */
-private const val SCREEN_MS = 380
+private const val SCREEN_MS = 330
 
 /** While the back gesture is held, the screen follows the finger but never leaves more than this. */
 private const val MAX_HELD_OFFSET = 0.9f

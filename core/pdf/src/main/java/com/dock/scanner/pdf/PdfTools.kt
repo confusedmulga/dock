@@ -16,6 +16,7 @@ import com.tom_roush.pdfbox.pdmodel.graphics.image.JPEGFactory
 import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImageXObject
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
 import java.util.IdentityHashMap
 import kotlin.math.ceil
 import kotlin.math.log2
@@ -45,9 +46,11 @@ object PdfTools {
     /** Large files are paged through a temp file instead of being held in memory. */
     private val memory get() = MemoryUsageSetting.setupMixed(32L * 1024 * 1024)
 
-    private fun open(file: File): PDDocument {
+    private fun open(file: File): PDDocument = open { PDDocument.load(file, memory) }
+
+    private fun open(load: () -> PDDocument): PDDocument {
         val doc = try {
-            PDDocument.load(file, memory)
+            load()
         } catch (e: Throwable) {
             // Encrypted PDFs fail inside the security handler (BouncyCastle isn't bundled).
             if (e is NoClassDefFoundError || e.javaClass.simpleName.contains("InvalidPassword")) {
@@ -63,6 +66,32 @@ object PdfTools {
     }
 
     fun pageCount(file: File): Int = open(file).use { it.numberOfPages }
+
+    /** Whether Dock made the PDF and whether it has Dock's searchable text; see [PdfTextLayer.Info]. */
+    fun textLayerInfo(input: InputStream): PdfTextLayer.Info = open { PDDocument.load(input, memory) }.use(PdfTextLayer::info)
+
+    /** The user's searchable-text choice stored in the PDF, or null if they never made one. */
+    fun textLayerChoice(input: InputStream): Boolean? = open { PDDocument.load(input, memory) }.use(PdfTextLayer::choice)
+
+    /** 0-based pages to run text recognition on; see [PdfTextLayer.pagesWithoutText]. */
+    fun pagesWithoutText(file: File): List<Int> = open(file).use(PdfTextLayer::pagesWithoutText)
+
+    /** Writes [input] with Dock's searchable text from [pages] (by 0-based index) to [output]. */
+    fun addTextLayer(input: File, output: File, pages: Map<Int, PdfTextLayer.PageText>) {
+        open(input).use { doc ->
+            PdfTextLayer.apply(doc, pages)
+            doc.save(output)
+        }
+    }
+
+    /** Writes [input] without Dock's searchable text to [output], remembering that the user turned it off. */
+    fun removeTextLayer(input: File, output: File) {
+        open(input).use { doc ->
+            PdfTextLayer.remove(doc)
+            PdfTextLayer.setChoice(doc, false)
+            doc.save(output)
+        }
+    }
 
     /** Appends [inputs] in order into one PDF. */
     fun merge(inputs: List<File>, output: File) {

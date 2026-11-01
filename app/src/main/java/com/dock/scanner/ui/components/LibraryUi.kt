@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -61,6 +62,7 @@ import com.dock.scanner.ui.tools.PdfTool
 import coil3.compose.AsyncImage
 import androidx.compose.material3.HorizontalDivider
 import java.util.Calendar
+import kotlin.math.roundToInt
 
 /** Large, tightly tracked screen title with optional subtitle and trailing actions. */
 @Composable
@@ -120,6 +122,7 @@ class PdfActions(
 fun PdfRow(item: LibraryItem, actions: PdfActions, showFolder: Boolean, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val preview by rememberPdfPreview(item, 48.dp)
+    val ocrProgress = rememberOcrProgress(item)
     var menu by remember { mutableStateOf(false) }
     val thumbSize = Modifier.size(width = 48.dp, height = 64.dp)
 
@@ -145,7 +148,7 @@ fun PdfRow(item: LibraryItem, actions: PdfActions, showFolder: Boolean, modifier
             Text(item.displayName, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(2.dp))
             val details = buildList {
-                add(friendlyDate(context, item.lastModified))
+                add(friendlyDate(context, item.date))
                 when {
                     item.isImage -> add(item.extension.uppercase())
                     format != null -> add(item.extension.uppercase())
@@ -154,6 +157,17 @@ fun PdfRow(item: LibraryItem, actions: PdfActions, showFolder: Boolean, modifier
                 add(Formatter.formatShortFileSize(context, item.size))
             }.joinToString(" · ")
             Text(details, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            if (ocrProgress != null) {
+                Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(progress = { ocrProgress }, modifier = Modifier.size(12.dp), strokeWidth = 1.5.dp)
+                    Text(
+                        "Reading text… ${(ocrProgress * 100).roundToInt()}%",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(start = 6.dp),
+                    )
+                }
+            }
             if (showFolder && item.folderName != null) {
                 Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(
@@ -198,6 +212,7 @@ fun PdfRow(item: LibraryItem, actions: PdfActions, showFolder: Boolean, modifier
                         leadingIcon = { Icon(painterResource(R.drawable.ic_split), null) },
                         onClick = { menu = false; actions.onTool(PdfTool.Split, item) },
                     )
+                    OcrMenuItem(item, onDismiss = { menu = false })
                     HorizontalDivider()
                 }
                 DropdownMenuItem(

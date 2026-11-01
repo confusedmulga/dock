@@ -25,6 +25,11 @@ data class LibraryItem(
     /** Number of entries, for folders. */
     val childCount: Int = 0,
     val mimeType: String = "",
+    /**
+     * When the file last changed in a way the user would count, for showing and sorting:
+     * Dock adding or removing searchable text doesn't. [lastModified] is the file system's.
+     */
+    val date: Long = lastModified,
 ) {
     val isPdf: Boolean get() = !isFolder && (mimeType == DockLibrary.MIME_PDF || name.endsWith(".pdf", ignoreCase = true))
     val isImage: Boolean get() = !isFolder && mimeType.startsWith("image/")
@@ -50,6 +55,9 @@ class DockLibrary(context: Context) {
 
     private val resolver = context.contentResolver
     private val prefs = context.getSharedPreferences("library", Context.MODE_PRIVATE)
+
+    /** Dates to show for files Dock rewrote only for their text layer, keyed by their new size and time. */
+    private val keptDates = context.getSharedPreferences("kept_dates", Context.MODE_PRIVATE)
 
     /** The granted folder, or null before setup or after the user revoked access. */
     fun rootUri(): Uri? {
@@ -85,7 +93,7 @@ class DockLibrary(context: Context) {
             .filter { it.isFolder || it.isPdf || it.isImage || it.isDocument }
             .map { if (it.isFolder) it.copy(childCount = countChildren(root, it.documentId)) else it }
             .sortedWith(compareByDescending<LibraryItem> { it.isFolder }.thenBy { if (it.isFolder) it.name.lowercase() else "" }
-                .thenByDescending { it.lastModified })
+                .thenByDescending { it.date })
     }
 
     /** Every PDF and document in the library (a few folder levels deep), newest first. */
@@ -101,7 +109,7 @@ class DockLibrary(context: Context) {
             }
         }
         walk(rootId(root), null, 0)
-        return result.sortedByDescending { it.lastModified }
+        return result.sortedByDescending { it.date }
     }
 
     fun createFolder(root: Uri, parentId: String, name: String): Uri? =
@@ -139,6 +147,53 @@ class DockLibrary(context: Context) {
     fun itemFor(root: Uri, documentId: String, parentId: String): LibraryItem? =
         query(documentUri(root, documentId), root, parentId).firstOrNull()
 
+    /**
+     * After Dock rewrote [uri] only to add or take out its searchable text: keeps showing the
+     * date it had before ([before], its size and time then), so it doesn't jump to the top of
+     * the lists. Any later change to the file shows as usual.
+     */
+    fun keepDate(uri: Uri, before: Pair<Long, Long>) {
+        val after = stat(uri) ?: return
+        synchronized(kept) {
+            val date = shownDate(before)
+            keptFor(before)?.let { old ->
+                kept -= old
+                keptDates.edit { remove(dateKey(old.stat)) }
+            }
+            kept += Kept(after, date)
+            keptDates.edit { putLong(dateKey(after), date) }
+        }
+    }
+
+    /** A rewritten file's size and time as Dock saw them right after writing, and the date to show for it. */
+    private class Kept(val stat: Pair<Long, Long>, val date: Long)
+
+    private val kept: MutableList<Kept> by lazy {
+        keptDates.all.mapNotNullTo(ArrayList()) { (key, value) ->
+            val parts = key.split('@').mapNotNull(String::toLongOrNull)
+            if (parts.size == 2 && value is Long) Kept(parts[0] to parts[1], value) else null
+        }
+    }
+
+    /**
+     * The storage layer can settle a file's time a moment after the write returns (tens of
+     * milliseconds on the emulator), so the time may be a little later than the one recorded.
+     */
+    private fun keptFor(stat: Pair<Long, Long>): Kept? = synchronized(kept) {
+        kept.firstOrNull { it.stat.first == stat.first && stat.second - it.stat.second in -SETTLE_MS..SETTLE_MS }
+    }
+
+    private fun shownDate(stat: Pair<Long, Long>) = keptFor(stat)?.date ?: stat.second
+
+    private fun dateKey(stat: Pair<Long, Long>) = "${stat.first}@${stat.second}"
+
+    /** A file's size and last-modified time, to tell whether it changed; null if it's gone. */
+    fun stat(uri: Uri): Pair<Long, Long>? = runCatching {
+        resolver.query(uri, arrayOf(Document.COLUMN_SIZE, Document.COLUMN_LAST_MODIFIED), null, null, null)?.use { c ->
+            if (c.moveToFirst()) c.getLong(0) to c.getLong(1) else null
+        }
+    }.getOrNull()
+
     private fun countChildren(root: Uri, folderId: String): Int =
         resolver.query(
             DocumentsContract.buildChildDocumentsUriUsingTree(root, folderId),
@@ -159,6 +214,8 @@ class DockLibrary(context: Context) {
                 val id = c.getString(0) ?: continue
                 val name = c.getString(1) ?: continue
                 if (name.startsWith(".")) continue
+                val lastModified = if (c.isNull(3)) 0 else c.getLong(3)
+                val size = if (c.isNull(4)) 0 else c.getLong(4)
                 items += LibraryItem(
                     uri = DocumentsContract.buildDocumentUriUsingTree(root, id),
                     documentId = id,
@@ -166,8 +223,9 @@ class DockLibrary(context: Context) {
                     name = name,
                     isFolder = c.getString(2) == Document.MIME_TYPE_DIR,
                     mimeType = c.getString(2).orEmpty(),
-                    lastModified = if (c.isNull(3)) 0 else c.getLong(3),
-                    size = if (c.isNull(4)) 0 else c.getLong(4),
+                    lastModified = lastModified,
+                    size = size,
+                    date = shownDate(size to lastModified),
                 )
             }
         }
@@ -176,6 +234,9 @@ class DockLibrary(context: Context) {
 
     companion object {
         const val MIME_PDF = "application/pdf"
+
+        /** How far a rewritten file's time may drift from the one Dock recorded, either way. */
+        private const val SETTLE_MS = 3_000L
         private const val KEY_ROOT = "root_tree_uri"
         private const val EXTERNAL_STORAGE = "com.android.externalstorage.documents"
 

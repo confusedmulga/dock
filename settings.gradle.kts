@@ -17,6 +17,11 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // Dock's own minimal ONNX Runtime build (see third_party/onnxruntime).
+        maven {
+            url = uri("third_party/onnxruntime/maven")
+            content { includeGroup("com.dock.thirdparty") }
+        }
     }
 }
 
@@ -26,3 +31,4 @@ include(":app")
 include(":core:scanner")
 include(":core:pdf")
 include(":core:office")
+include(":core:ocr")

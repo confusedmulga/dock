@@ -56,6 +56,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -105,6 +106,7 @@ import androidx.core.view.doOnLayout
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
+import com.dock.scanner.DockApp
 import com.dock.scanner.R
 import com.dock.scanner.core.Quad
 import com.dock.scanner.data.ScanMode
@@ -162,6 +164,7 @@ private fun CameraContent(vm: ScanViewModel, onDone: () -> Unit, onImported: () 
     val scope = rememberCoroutineScope()
     val pages by vm.pages.collectAsStateWithLifecycle()
     val quality by vm.quality.collectAsStateWithLifecycle()
+    val ocrNewScans by vm.ocrNewScans.collectAsStateWithLifecycle()
     val mode by vm.scanMode.collectAsStateWithLifecycle()
     var settingsOpen by remember { mutableStateOf(false) }
 
@@ -203,7 +206,10 @@ private fun CameraContent(vm: ScanViewModel, onDone: () -> Unit, onImported: () 
     }
     // Edges are only looked for in Auto edges mode; Standard keeps the whole frame.
     DisposableEffect(mode) {
-        if (mode == ScanMode.AutoEdges) session.setAnalyzer(analysisExecutor, LiveDocumentAnalyzer { liveQuad = it })
+        if (mode == ScanMode.AutoEdges) {
+            val app = context.applicationContext as DockApp
+            session.setAnalyzer(analysisExecutor, LiveDocumentAnalyzer({ app.cornerModel }) { liveQuad = it })
+        }
         onDispose {
             session.setAnalyzer(analysisExecutor, null)
             liveQuad = null
@@ -467,6 +473,8 @@ private fun CameraContent(vm: ScanViewModel, onDone: () -> Unit, onImported: () 
             quality = quality,
             hasPages = pages.isNotEmpty(),
             onQuality = vm::setQuality,
+            ocr = ocrNewScans,
+            onOcr = vm::setOcrNewScans,
             onDismiss = { settingsOpen = false },
         )
     }
@@ -705,7 +713,14 @@ private suspend fun View.awaitLayout() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ScanSettingsSheet(quality: ScanQuality, hasPages: Boolean, onQuality: (ScanQuality) -> Unit, onDismiss: () -> Unit) {
+private fun ScanSettingsSheet(
+    quality: ScanQuality,
+    hasPages: Boolean,
+    onQuality: (ScanQuality) -> Unit,
+    ocr: Boolean,
+    onOcr: (Boolean) -> Unit,
+    onDismiss: () -> Unit,
+) {
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.navigationBarsPadding().padding(start = 16.dp, end = 16.dp, bottom = 24.dp)) {
             Text("Scan settings", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = 8.dp, bottom = 12.dp))
@@ -744,6 +759,33 @@ private fun ScanSettingsSheet(quality: ScanQuality, hasPages: Boolean, onQuality
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 8.dp, top = 8.dp),
                 )
+            }
+            Text(
+                "Text",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 8.dp, top = 20.dp, bottom = 4.dp),
+            )
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+                    .clip(MaterialTheme.shapes.large)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    .toggleable(value = ocr, role = Role.Switch, onValueChange = onOcr)
+                    .padding(start = 20.dp, end = 16.dp, top = 14.dp, bottom = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                    Text("Make scans searchable", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Reads the text on your phone after saving, so you can search and copy it in any PDF app. " +
+                            "Each PDF can be switched in its menu.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = ocr, onCheckedChange = null)
             }
         }
     }

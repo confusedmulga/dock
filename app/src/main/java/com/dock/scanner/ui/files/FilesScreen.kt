@@ -51,6 +51,9 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.material3.AlertDialog
+import androidx.compose.ui.res.painterResource
+import com.dock.scanner.R
 import com.dock.scanner.ui.LibraryViewModel
 import com.dock.scanner.ui.components.ChromeButton
 import com.dock.scanner.ui.components.EmptyMessage
@@ -65,6 +68,8 @@ import com.dock.scanner.ui.theme.DockMotion
 @Composable
 fun FilesScreen(vm: LibraryViewModel, actions: PdfActions, bottomInset: Dp) {
     val pdfs by vm.allFiles.collectAsStateWithLifecycle()
+    val reading by vm.ocr.progress.collectAsStateWithLifecycle()
+    var confirmAll by remember { mutableStateOf(false) }
     var searching by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -101,6 +106,13 @@ fun FilesScreen(vm: LibraryViewModel, actions: PdfActions, bottomInset: Dp) {
                 },
             ) {
                 if (!searching) {
+                    if (pdfs.orEmpty().any { it.isPdf }) {
+                        ChromeButton(
+                            painterResource(R.drawable.ic_ocr),
+                            contentDescription = "Make all PDFs searchable",
+                            onClick = { confirmAll = true },
+                        )
+                    }
                     ChromeButton(
                         rememberVectorPainter(Icons.Filled.Search),
                         contentDescription = "Search files",
@@ -108,6 +120,9 @@ fun FilesScreen(vm: LibraryViewModel, actions: PdfActions, bottomInset: Dp) {
                     )
                 }
             }
+        }
+        if (reading.isNotEmpty()) {
+            item(key = "reading") { ReadingBanner(left = reading.size, onStop = vm.ocr::stopAll) }
         }
         item(key = "search") {
             AnimatedVisibility(
@@ -133,12 +148,53 @@ fun FilesScreen(vm: LibraryViewModel, actions: PdfActions, bottomInset: Dp) {
                 items(results, key = { it.documentId }) { PdfRow(it, actions, showFolder = true) }
             }
             else -> {
-                results.groupBy { dateSection(it.lastModified) }.forEach { (section, items) ->
+                results.groupBy { dateSection(it.date) }.forEach { (section, items) ->
                     item(key = "section-$section") { SectionHeader(section) }
                     items(items, key = { it.documentId }) { PdfRow(it, actions, showFolder = true) }
                 }
             }
         }
+    }
+
+    if (confirmAll) {
+        AlertDialog(
+            onDismissRequest = { confirmAll = false },
+            title = { Text("Make all PDFs searchable?") },
+            text = {
+                Text(
+                    "Dock reads the text of every PDF that doesn't have it yet, on your phone, one at a time. " +
+                        "Pages that already have text are skipped, and so are PDFs you switched off. " +
+                        "Many PDFs can take a while; you can keep using Dock meanwhile.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { confirmAll = false; vm.ocr.makeAllSearchable(pdfs.orEmpty()) }) { Text("Start") }
+            },
+            dismissButton = { TextButton(onClick = { confirmAll = false }) { Text("Cancel") } },
+        )
+    }
+}
+
+/** Text being read in the background (e.g. after "Make all searchable"), with a way to stop it. */
+@Composable
+private fun ReadingBanner(left: Int, onStop: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+            .clip(MaterialTheme.shapes.large)
+            .background(MaterialTheme.colorScheme.secondaryContainer)
+            .padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onSecondaryContainer)
+        Text(
+            if (left == 1) "Reading text · 1 PDF to go" else "Reading text · $left PDFs to go",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            modifier = Modifier.weight(1f).padding(start = 12.dp),
+        )
+        TextButton(onClick = onStop) { Text("Stop") }
     }
 }
 

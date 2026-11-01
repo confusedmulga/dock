@@ -41,12 +41,15 @@ object PageProcessor {
         return if (ExifInterface(file).rotationDegrees % 180 == 0) width to height else height to width
     }
 
-    /** Auto-detects the document in a photo file. Decodes at 1/4 resolution, so it is fast. */
-    fun detect(file: File, detector: DocumentDetector): Quad? {
+    /**
+     * Auto-detects the document in a photo file. Decodes at 1/4 resolution, so it is fast.
+     * With a [cornerModel], it gets a say too; see [CornerModel.pick].
+     */
+    fun detect(file: File, detector: DocumentDetector, cornerModel: CornerModel? = null): Quad? {
         initOpenCv()
         val gray = loadUpright(file, Imgcodecs.IMREAD_REDUCED_GRAYSCALE_4)
         try {
-            return detector.detect(gray)
+            return CornerModel.pick(detector.detect(gray), cornerModel?.detect(gray))
         } finally {
             gray.release()
         }

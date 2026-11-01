@@ -26,6 +26,7 @@ import com.dock.scanner.data.storage.DockLibrary
 import com.dock.scanner.data.storage.LibraryItem
 import com.dock.scanner.data.tools.PdfSources
 import com.dock.scanner.pdf.PasswordProtectedException
+import com.dock.scanner.pdf.PdfTextLayer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
@@ -108,6 +109,9 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
 
     private val settings = (app as DockApp).settings
 
+    /** Finds pages the classic detector misses; null if it couldn't be loaded. */
+    private val cornerModel get() = getApplication<DockApp>().cornerModel
+
     /** Scan quality for new pages; changing it re-renders the pages already in the session. */
     private val _quality = MutableStateFlow(settings.scanQuality)
     val quality: StateFlow<ScanQuality> = _quality.asStateFlow()
@@ -127,6 +131,15 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         _scanMode.value = mode
     }
 
+    /** Whether new scans get searchable text after saving. */
+    private val _ocrNewScans = MutableStateFlow(settings.ocrNewScans)
+    val ocrNewScans: StateFlow<Boolean> = _ocrNewScans.asStateFlow()
+
+    fun setOcrNewScans(on: Boolean) {
+        settings.ocrNewScans = on
+        _ocrNewScans.value = on
+    }
+
     fun newCaptureFile(): File = File(sessionDir, "src_${UUID.randomUUID()}.jpg")
 
     // region Adding pages
@@ -140,7 +153,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
             val page = withContext(worker) {
                 runCatching {
                     val (w, h) = PageProcessor.uprightSize(file)
-                    val detected = runCatching { PageProcessor.detect(file, DocumentDetector()) }.getOrNull()
+                    val detected = runCatching { PageProcessor.detect(file, DocumentDetector(), cornerModel) }.getOrNull()
                     Page(
                         id = UUID.randomUUID().toString(),
                         sequence = seq,
@@ -188,7 +201,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
             val info = withContext(worker) {
                 runCatching {
                     val size = PageProcessor.uprightSize(file)
-                    size to runCatching { PageProcessor.detect(file, DocumentDetector()) }.getOrNull()
+                    size to runCatching { PageProcessor.detect(file, DocumentDetector(), cornerModel) }.getOrNull()
                 }.getOrNull()
             }
             val old = find(id)
@@ -486,35 +499,42 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Writes the edited PDF back over the original file, renaming it if the name changed. */
     fun saveOverOriginal(library: DockLibrary, item: LibraryItem, name: String, onSaved: (String) -> Unit) =
-        save(onSaved, name, replacing = true) {
+        save(onSaved, name, original = item.uri) {
             if (name != item.displayName) library.rename(item, name) ?: error("Couldn't rename") else item.uri
         }
 
-    private fun save(onSaved: (String) -> Unit, name: String, replacing: Boolean = false, target: () -> Uri) {
+    /** @param original the file being replaced, if any. */
+    private fun save(onSaved: (String) -> Unit, name: String, original: Uri? = null, target: () -> Uri) {
         if (_exporting.value || _pages.value.isEmpty()) return
         _exporting.value = true
         val resolver = getApplication<Application>().contentResolver
+        val ocr = getApplication<DockApp>().ocr
         viewModelScope.launch {
             try {
                 // Wait for any edits still rendering so the PDF matches the screen.
                 val pages = _pages.first { list -> list.none { it.processing } }
                 withContext(Dispatchers.IO) {
                     val specs = pdfPages(pages)
-                    if (replacing) {
+                    // An edited PDF keeps its searchable-text choice; turned off stays off.
+                    val choice = original?.let(ocr::choice)
+                    val writer = JpegPdfWriter(info = if (choice == false) mapOf(PdfTextLayer.INFO_KEY to "off") else emptyMap())
+                    if (original != null) {
                         // Write to a temp file first, so a failure can't leave the original half-written.
                         val tmp = File(sessionDir, "replace.pdf")
-                        tmp.outputStream().use { JpegPdfWriter().writePages(specs, it) }
+                        tmp.outputStream().use { writer.writePages(specs, it) }
                         val uri = target()
                         resolver.openOutputStream(uri, "wt")!!.use { out -> tmp.inputStream().use { it.copyTo(out) } }
                         tmp.delete()
+                        ocr.afterSave(uri, name, choice)
                     } else {
                         val uri = target()
                         try {
-                            resolver.openOutputStream(uri, "wt")!!.use { JpegPdfWriter().writePages(specs, it) }
+                            resolver.openOutputStream(uri, "wt")!!.use { writer.writePages(specs, it) }
                         } catch (e: Exception) {
                             runCatching { DocumentsContract.deleteDocument(resolver, uri) }
                             throw e
                         }
+                        ocr.afterSave(uri, name, null)
                     }
                 }
                 clear()

@@ -1,7 +1,7 @@
 # Dock roadmap
 
 Dock is an open-source, fully offline document scanner for Android: camera → find the page →
-straighten it → clean it up → PDF. No accounts, no cloud, no AI, no network permission.
+straighten it → clean it up → PDF. No accounts, no cloud, no network permission; text recognition runs on the phone.
 
 ## How we work
 
@@ -125,6 +125,10 @@ operations that must keep text and vectors, Android's PdfRenderer for page rende
 - [ ] Mid-edge handles in the corner editor
 - [ ] More filters: "Light text", "Whiteboard", brightness/contrast sliders
 - [ ] Detection tuning on a corpus of real photos (light desks, glossy paper, receipts, ID cards)
+- [x] Learned corner detector as a second opinion: DocAligner's lcnet100 heatmap model (Apache-2.0;
+      2.6 MB as shipped), on photos and in the live preview (4 times a second). Agrees with OpenCV within
+      1% on ordinary photos; wins when OpenCV finds nothing or disagrees by more than 5% (a beige desk)
+- [ ] A white page on a near-white desk still beats both (the model misses one corner)
 
 ## Phase 4: Export
 
@@ -134,11 +138,22 @@ operations that must keep text and vectors, Android's PdfRenderer for page rende
 - [ ] Import existing PDFs (`PdfRenderer`) to append scans
 - [ ] Print via the Android print framework
 
-## Phase 5: Offline OCR (optional)
+## Phase 5: Offline OCR
 
-- [ ] Tesseract (on-device) text recognition
-- [ ] Searchable PDFs (invisible text layer), copy text from a page
+- [x] On-device text recognition (`core:ocr`): PaddleOCR PP-OCRv5 mobile, Latin script, on ONNX Runtime.
+      Picked over Tesseract and PP-OCRv6 by measured error rates (0.1% of characters on scanned A4);
+      weights stored as float16 (12.9 → 7 MB)
+- [x] Searchable PDFs: invisible text layer (glyphless font, like OCRmyPDF), placed per word, on rotated pages too
+- [x] New scans get it after saving (setting in the scan settings); a switch per PDF in its menu;
+      **Run OCR** for PDFs from elsewhere (pages that already have text are skipped)
+- [x] **Make all searchable** (Files), one PDF at a time, with progress and Stop; files keep the date they showed
+- [ ] Copy text from a page in Dock's viewer
 - [ ] Search across documents
+- [ ] More scripts (Cyrillic, Devanagari, Arabic, CJK) as optional recognizers
+- [ ] Sideways / upside-down pages (PaddleOCR's orientation classifier)
+- [x] Smaller runtime: ONNX Runtime 1.31.0 built from source with only the operators Dock's models use
+      (`third_party/onnxruntime`)
+- [x] About screen listing every third-party component and model with its license and Dock's changes
 
 ## Phase 6: Release
 

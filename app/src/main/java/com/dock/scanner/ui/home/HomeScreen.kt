@@ -1,5 +1,9 @@
 package com.dock.scanner.ui.home
 
+import com.dock.scanner.ui.components.ChromeButton
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.Icons
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
@@ -71,6 +75,7 @@ fun HomeScreen(
     bottomInset: Dp,
     onTool: (HomeTool) -> Unit,
     onSeeAllFiles: () -> Unit,
+    onAbout: () -> Unit,
 ) {
     val files by vm.allFiles.collectAsStateWithLifecycle()
     val recent = files.orEmpty().take(3)
@@ -79,7 +84,9 @@ fun HomeScreen(
 
     LazyColumn(contentPadding = PaddingValues(top = top + 8.dp, bottom = bottomInset), modifier = Modifier.fillMaxSize()) {
         item(key = "title") {
-            LargeTitle("Dock", subtitle = "Scan, edit and convert PDFs. All on your device.")
+            LargeTitle("Dock", subtitle = "Scan, edit and convert PDFs. All on your device.") {
+                ChromeButton(rememberVectorPainter(Icons.Outlined.Info), contentDescription = "About Dock", onClick = onAbout)
+            }
         }
         item(key = "scan") {
             HeroCard(HomeTool.Scan, onClick = { onTool(HomeTool.Scan) }, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))

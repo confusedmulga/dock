@@ -16,8 +16,10 @@ import java.util.TimeZone
  * passing the JPEG bytes straight through keeps PDFs small and export fast. A page can hold
  * several images at arbitrary positions (e.g. an ID card's front and back on one A4 sheet),
  * placed as vectors, so nothing is re-rasterized or loses sharpness.
+ *
+ * @param info extra document information entries (keys are PDF names, e.g. "DockOCR").
  */
-class JpegPdfWriter(private val producer: String = "Dock") {
+class JpegPdfWriter(private val producer: String = "Dock", private val info: Map<String, String> = emptyMap()) {
 
     data class JpegInfo(val width: Int, val height: Int, val components: Int)
 
@@ -51,7 +53,8 @@ class JpegPdfWriter(private val producer: String = "Dock") {
         o.write(byteArrayOf('%'.code.toByte(), 0xE2.toByte(), 0xE3.toByte(), 0xCF.toByte(), 0xD3.toByte(), '\n'.code.toByte()))
 
         begin(1); o.ascii("<< /Type /Catalog /Pages 2 0 R >>\nendobj\n")
-        begin(3); o.ascii("<< /Producer (${escape(producer)}) /CreationDate (D:${timestamp()}Z) >>\nendobj\n")
+        val extra = info.entries.joinToString("") { (key, value) -> " /$key (${escape(value)})" }
+        begin(3); o.ascii("<< /Producer (${escape(producer)}) /CreationDate (D:${timestamp()}Z)$extra >>\nendobj\n")
 
         for (page in pages) {
             val pageObj = nextObject++

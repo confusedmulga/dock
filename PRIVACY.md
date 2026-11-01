@@ -1,6 +1,6 @@
 # Privacy Policy for Dock
 
-**Effective date:** October 16, 2026
+**Effective date:** November 1, 2026
 
 Dock is an open-source document scanner for Android (package name `com.solo.dock`), developed by
 [confusedmulga](https://github.com/confusedmulga). This policy explains what happens to your
@@ -28,7 +28,8 @@ The app has no servers and no third-party SDKs for analytics, advertising or cra
 ## Permissions and what they are used for
 
 **Camera.** Used to show the live preview, find the edges of a page and take the photo of it.
-Preview frames are analysed in memory on your device and thrown away. Only the pages you choose
+Preview frames are analysed in memory on your device, by OpenCV and a small corner-finding model
+built into the app, and thrown away. Only the pages you choose
 to capture are kept. You can refuse or revoke this permission at any time and still import
 photos instead.
 
@@ -52,6 +53,11 @@ except images you pick yourself.
   save or discard the scan, when the tool finishes, or when the app is uninstalled.
 - **PDF metadata.** PDFs that Dock creates record "Dock" as the producing app and the time they
   were created. Dock does not add your name, device details or location to them.
+- **Recognized text.** When searchable text is on (the default for new scans, and switchable for
+  each PDF), Dock reads the text on your pages with models built into the app, entirely on your
+  device, and writes it into the PDF as an invisible layer, along with whether you turned it on
+  or off. Anyone you share such a PDF with can search and copy that text. Turning it off for a
+  PDF removes the text again.
 
 Dock opts out of Android's automatic app backup, so its private data is not uploaded to your
 backup account. The PDFs in your chosen folder are regular files, so if you use a backup or sync

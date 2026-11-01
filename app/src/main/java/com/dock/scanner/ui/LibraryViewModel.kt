@@ -84,6 +84,25 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     private val _messages = Channel<String>(Channel.BUFFERED)
     val messages = _messages.receiveAsFlow()
 
+    /** Searchable text for PDFs, worked on in the background. */
+    val ocr = (app as DockApp).ocr
+
+    init {
+        viewModelScope.launch { ocr.messages.collect { _messages.send(it) } }
+        // A PDF got its text added or taken out: it's a new file now (new size and date).
+        viewModelScope.launch {
+            ocr.changed.collect { documentId ->
+                refresh()
+                val viewed = _viewing.value ?: return@collect
+                val root = _root.value ?: return@collect
+                if (viewed.documentId == documentId) {
+                    withContext(Dispatchers.IO) { runCatching { library.itemFor(root, documentId, viewed.parentId) }.getOrNull() }
+                        ?.let { fresh -> _viewing.value = fresh.copy(folderName = viewed.folderName) }
+                }
+            }
+        }
+    }
+
     /**
      * The PDF open in the viewer. Kept up to date when it's renamed or moved (both give it a new
      * URI); becomes null when it's deleted.

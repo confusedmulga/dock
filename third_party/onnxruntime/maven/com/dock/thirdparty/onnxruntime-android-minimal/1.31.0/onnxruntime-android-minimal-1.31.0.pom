@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.dock.thirdparty</groupId>
+  <artifactId>onnxruntime-android-minimal</artifactId>
+  <version>1.31.0</version>
+  <packaging>aar</packaging>
+  <name>ONNX Runtime 1.31.0, minimal build for Dock</name>
+  <description>Built from microsoft/onnxruntime v1.31.0 with only the operators Dock's models use. See ../../../../../../README.md.</description>
+  <licenses>
+    <license>
+      <name>MIT License</name>
+      <url>https://github.com/microsoft/onnxruntime/blob/v1.31.0/LICENSE</url>
+    </license>
+  </licenses>
+</project>

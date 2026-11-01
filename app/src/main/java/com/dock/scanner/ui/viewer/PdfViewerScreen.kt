@@ -90,6 +90,7 @@ import com.dock.scanner.ui.LibraryViewModel
 import com.dock.scanner.ui.components.EmptyMessage
 import com.dock.scanner.ui.components.GlassBubble
 import com.dock.scanner.ui.components.ItemDialogs
+import com.dock.scanner.ui.components.OcrMenuItem
 import com.dock.scanner.ui.components.ZoomableColumn
 import com.dock.scanner.ui.components.SharedKeys
 import com.dock.scanner.ui.components.glass
@@ -141,6 +142,7 @@ fun PdfViewerScreen(
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainer)) {
         ZoomablePdf(
             uri = item.uri,
+            version = item.lastModified,
             // The list's thumbnail stands in for the first page until it's rendered, so the
             // page that grows out of the list isn't blank.
             firstPage = remember(item.uri) { PdfPreviews.cached(item.uri, item.lastModified)?.thumbnail },
@@ -249,6 +251,7 @@ internal fun FileMenu(
                 onClick = { run(compress) },
             )
         }
+        if (item.isPdf) OcrMenuItem(item, onDismiss)
         HorizontalDivider()
         DropdownMenuItem(
             text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
@@ -260,13 +263,14 @@ internal fun FileMenu(
 
 /** The PDF's pages in a [ZoomableColumn]; the first one shares its element with the list thumbnail. */
 @Composable
-fun ZoomablePdf(uri: Uri, modifier: Modifier, firstPage: Bitmap? = null, firstPageKey: String? = null) {
+fun ZoomablePdf(uri: Uri, modifier: Modifier, version: Long = 0, firstPage: Bitmap? = null, firstPageKey: String? = null) {
     val context = LocalContext.current
-    // PdfRenderer allows one open page at a time, so all rendering is serialized.
-    val document = remember(uri) {
+    // PdfRenderer allows one open page at a time, so all rendering is serialized. A new
+    // [version] (the file was rewritten, e.g. its text was added) opens the file afresh.
+    val document = remember(uri, version) {
         runCatching { context.contentResolver.openFileDescriptor(uri, "r")?.let(::PdfRenderer) }.getOrNull()
     }
-    val lock = remember(uri) { Mutex() }
+    val lock = remember(uri, version) { Mutex() }
     DisposableEffect(document) {
         // Wait for any page still rendering before closing the file.
         onDispose { CoroutineScope(Dispatchers.IO).launch { lock.withLock { document?.close() } } }

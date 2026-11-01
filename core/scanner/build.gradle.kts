@@ -27,6 +27,8 @@ kotlin {
 
 dependencies {
     api(libs.opencv)
+    // Runs the learned corner model (CornerModel).
+    implementation(libs.onnxruntime.android)
     implementation(libs.androidx.exifinterface)
 
     testImplementation(libs.junit)

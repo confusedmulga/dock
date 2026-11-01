@@ -3,8 +3,10 @@ package com.dock.scanner
 import android.app.Application
 import android.util.Log
 import kotlin.concurrent.thread
+import com.dock.scanner.core.CornerModel
 import com.dock.scanner.core.PageProcessor
 import com.dock.scanner.data.DockSettings
+import com.dock.scanner.data.ocr.DocumentOcr
 import com.dock.scanner.data.storage.DockLibrary
 import com.dock.scanner.pdf.PdfTools
 
@@ -12,6 +14,12 @@ class DockApp : Application() {
 
     val library: DockLibrary by lazy { DockLibrary(this) }
     val settings: DockSettings by lazy { DockSettings(this) }
+    val ocr: DocumentOcr by lazy { DocumentOcr(this, library, settings) }
+
+    /** The learned page-corner finder, kept loaded once used (it's small); null if it failed to load. */
+    val cornerModel: CornerModel? by lazy {
+        runCatching { CornerModel.load(this) }.onFailure { Log.e("DockApp", "Corner model failed to load", it) }.getOrNull()
+    }
 
     override fun onCreate() {
         super.onCreate()

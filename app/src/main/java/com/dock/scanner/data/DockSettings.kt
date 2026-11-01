@@ -63,8 +63,14 @@ class DockSettings(context: Context) {
             ?: ScanMode.AutoEdges
         set(value) = prefs.edit { putString(KEY_SCAN_MODE, value.name) }
 
+    /** Recognize the text of new scans after saving, so their PDFs are searchable. Each PDF can still be switched on its own. */
+    var ocrNewScans: Boolean
+        get() = prefs.getBoolean(KEY_OCR_NEW_SCANS, true)
+        set(value) = prefs.edit { putBoolean(KEY_OCR_NEW_SCANS, value) }
+
     private companion object {
         const val KEY_SCAN_QUALITY = "scan_quality"
         const val KEY_SCAN_MODE = "scan_mode"
+        const val KEY_OCR_NEW_SCANS = "ocr_new_scans"
     }
 }

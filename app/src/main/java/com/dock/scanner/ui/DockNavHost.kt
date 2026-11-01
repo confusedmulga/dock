@@ -22,6 +22,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.navArgument
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.dock.scanner.ui.about.AboutScreen
 import com.dock.scanner.ui.camera.CameraScreen
 import com.dock.scanner.ui.tools.PdfTool
 import com.dock.scanner.ui.tools.ToolScreen
@@ -50,6 +51,7 @@ private object Routes {
     const val VIEWER = "viewer"
     const val DOCUMENT = "document"
     const val TOOL = "tool"
+    const val ABOUT = "about"
     fun camera(retakePageId: String? = null) = if (retakePageId == null) "camera" else "camera?retake=$retakePageId"
     fun page(id: String) = "page/$id"
 }
@@ -143,6 +145,9 @@ fun DockNavHost() {
                         )
                     }
                 }
+                composable(Routes.ABOUT) { entry ->
+                    BackSwipe(nav, entry) { AboutScreen(onBack = { nav.popBackStack() }) }
+                }
                 composable(Routes.CHANGE_FOLDER) { entry ->
                     BackSwipe(nav, entry) {
                         StorageSetupScreen(libraryVm, isChange = true, onDone = { nav.popBackStack() }, onCancel = { nav.popBackStack() })
@@ -182,6 +187,7 @@ fun DockNavHost() {
                                 nav.navigate(Routes.TOOL)
                             },
                             onChangeLocation = { nav.navigate(Routes.CHANGE_FOLDER) },
+                            onAbout = { nav.navigate(Routes.ABOUT) },
                         )
                     }
                 }

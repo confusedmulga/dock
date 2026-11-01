@@ -24,7 +24,7 @@ android {
         applicationId = "com.solo.dock"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
+        versionCode = 3
         versionName = "1.0.0"
 
         // OpenCV ships native code per CPU type; these two cover modern phones and the emulator.
@@ -49,8 +49,8 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.findByName("release")
             // Puts native symbols in the bundle for Play Console crash reports, for any library
-            // that ships them. Today's .so files (OpenCV, CameraX, Compose) come pre-stripped, so
-            // nothing is extracted yet and Play's "no debug symbols" notice is expected.
+            // that ships them: today ONNX Runtime's (~28 MB of bundle metadata, never downloaded
+            // to phones). OpenCV, CameraX and Compose come pre-stripped.
             ndk { debugSymbolLevel = "SYMBOL_TABLE" }
         }
     }
@@ -71,6 +71,7 @@ dependencies {
     implementation(project(":core:scanner"))
     implementation(project(":core:pdf"))
     implementation(project(":core:office"))
+    implementation(project(":core:ocr"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)

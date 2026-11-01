@@ -508,7 +508,7 @@ private fun ChoiceRow(item: LibraryItem, order: Int?, multiple: Boolean, onClick
         Column(Modifier.weight(1f).padding(start = 14.dp, end = 12.dp)) {
             Text(item.displayName, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val details = buildList {
-                add(friendlyDate(context, item.lastModified))
+                add(friendlyDate(context, item.date))
                 preview?.pageCount?.let { add(if (it == 1) "1 page" else "$it pages") }
                 add(Formatter.formatShortFileSize(context, item.size))
             }.joinToString(" · ")
