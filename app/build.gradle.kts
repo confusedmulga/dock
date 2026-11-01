@@ -24,8 +24,8 @@ android {
         applicationId = "com.solo.dock"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.0.0"
+        versionCode = 4
+        versionName = "1.2.1"
 
         // OpenCV ships native code per CPU type; these two cover modern phones and the emulator.
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
