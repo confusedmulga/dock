@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import android.util.Log
 import android.util.LruCache
 import com.dock.scanner.data.DockSettings
 import com.dock.scanner.data.storage.DockLibrary
@@ -34,6 +35,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.coroutineContext
@@ -92,6 +94,7 @@ class DocumentOcr(context: Context, private val library: DockLibrary, private va
     private var bulkMade = 0
     private var bulkFailed = 0
     @Volatile private var bulkRunning = false
+    @Volatile private var bulkStopped = false
 
     init {
         scope.launch {
@@ -134,6 +137,7 @@ class DocumentOcr(context: Context, private val library: DockLibrary, private va
     }
 
     fun stop(documentId: String) {
+        bulkStopped = true
         pending.remove(documentId)
         _progress.update { it - documentId }
         running?.takeIf { it.first.documentId == documentId }?.second?.cancel()
@@ -149,6 +153,7 @@ class DocumentOcr(context: Context, private val library: DockLibrary, private va
         if (!bulkRunning) {
             bulkMade = 0
             bulkFailed = 0
+            bulkStopped = false
             bulkRunning = true
         }
         pdfs.forEach { enqueue(Task(it.uri, it.documentId, it.displayName, on = true, announce = false, bulk = true)) }
@@ -164,7 +169,7 @@ class DocumentOcr(context: Context, private val library: DockLibrary, private va
         val made = if (bulkMade == 1) "1 PDF is now searchable" else "$bulkMade PDFs are now searchable"
         _messages.trySend(
             when {
-                bulkMade == 0 && bulkFailed == 0 -> "Every PDF was already searchable"
+                bulkMade == 0 && bulkFailed == 0 -> if (bulkStopped) "Stopped" else "Every PDF was already searchable"
                 bulkFailed == 0 -> made
                 else -> "$made; $bulkFailed couldn't be read"
             },
@@ -205,7 +210,13 @@ class DocumentOcr(context: Context, private val library: DockLibrary, private va
                     if (task.announce) _messages.trySend("“${task.name}” already has selectable text")
                     return
                 }
-                PdfTools.addTextLayer(input, output, recognize(input, pages) { done -> report(task, done) })
+                val texts = recognize(input, pages) { done -> report(task, done) }
+                // Blank pages, photos, or pages lying on their side, which the models can't read.
+                if (texts.values.all { page -> page.lines.all { it.isEmpty() } }) {
+                    if (task.announce) _messages.trySend("Dock couldn't find any text in “${task.name}”")
+                    return
+                }
+                PdfTools.addTextLayer(input, output, texts)
             } else {
                 PdfTools.removeTextLayer(input, output)
             }
@@ -215,7 +226,13 @@ class DocumentOcr(context: Context, private val library: DockLibrary, private va
                 if (task.announce) _messages.trySend("“${task.name}” changed while its text was being read. Try again.")
                 return
             }
-            app.contentResolver.openOutputStream(task.uri, "wt")!!.use { out -> output.inputStream().use { it.copyTo(out) } }
+            try {
+                write(output, task.uri)
+            } catch (e: IOException) {
+                // E.g. the storage filled up. The file was emptied by then, so put the original back: it's smaller, so it fits.
+                runCatching { write(input, task.uri) }
+                throw e
+            }
             // Only the text layer changed: the file keeps its place in the lists.
             library.keepDate(task.uri, before)
             _changed.tryEmit(task.documentId)
@@ -223,15 +240,21 @@ class DocumentOcr(context: Context, private val library: DockLibrary, private va
             if (task.announce) _messages.trySend("“${task.name}” is now searchable")
         } catch (e: CancellationException) {
             throw e
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
+            // Errors too: a malformed PDF can overflow the stack, and a huge one can run out of memory.
+            Log.w("DocumentOcr", "Text recognition failed", e)
             when {
                 task.bulk -> bulkFailed++
                 e is PasswordProtectedException -> _messages.trySend("“${task.name}” is password-protected")
-                else -> _messages.trySend("Couldn't read the text of “${task.name}”: ${e.message}")
+                else -> _messages.trySend("Couldn't read the text of “${task.name}”")
             }
         } finally {
             dir.deleteRecursively()
         }
+    }
+
+    private fun write(file: File, uri: Uri) {
+        app.contentResolver.openOutputStream(uri, "wt")!!.use { out -> file.inputStream().use { it.copyTo(out) } }
     }
 
     /** Renders each page in [pages] (0-based) and reads its text. */

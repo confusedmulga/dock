@@ -335,6 +335,10 @@ class ToolsViewModel(app: Application) : AndroidViewModel(app) {
                 ToolState.Failed("Password-protected PDFs aren't supported yet")
             } catch (e: Exception) {
                 ToolState.Failed(e.message ?: "Something went wrong")
+            } catch (e: StackOverflowError) {
+                ToolState.Failed("This PDF is damaged")
+            } catch (e: OutOfMemoryError) {
+                ToolState.Failed("This PDF is too large for this phone")
             } finally {
                 tool.dir.deleteRecursively()
             }

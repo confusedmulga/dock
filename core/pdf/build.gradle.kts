@@ -32,6 +32,8 @@ dependencies {
         exclude(group = "org.bouncycastle")
     }
 
+    testImplementation(libs.junit)
+
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.ext.junit)
 }

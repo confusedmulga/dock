@@ -1,5 +1,46 @@
 # Dock: bug review
 
+## Fourth pass (2026-11-10): `56f6dd8` and later, on the release build
+
+Scope: everything added since the third pass (OCR, the corner model, the minimal ONNX Runtime, the About screen), read whole, plus every main flow driven by hand on a **minified, signed release build**. No earlier pass ran the app minified.
+
+**Result:** 1 High, 3 Medium and 2 Low findings, all fixed in the working tree (not committed). 8 Lows are in the backlog. One solo review pass and a diff-scoped re-review of the fixes, with no independent blind pass: read this as "no confirmed Medium+ findings left in 1 pass", not as bug-free.
+
+| ID | Sev | Status | Where | Finding | Fix |
+|---|---|---|---|---|---|
+| U1 | **High** | Confirmed on emulator, fixed | `pdf/PdfTextLayer.kt` | OCR failed on every PDF in release builds, right after the last page was read: "Couldn't read the text of X: null". The invisible font was looked up relative to `PdfTextLayer`, which R8 renames to `m7.e`, while the font stays at its original path. Debug builds and every test run unminified, so all of them passed with the bug. | Looked up by its full path through the class loader. |
+| U2 | Medium | Confirmed on emulator, fixed | `data/ocr/DocumentOcr.kt`, `ui/tools/ToolsViewModel.kt` | Both catch only `Exception`. A PDF with very deep nesting makes PDFBox throw `StackOverflowError`, which crashed the whole app during "Make all searchable" and on Compress. Running out of memory goes the same way. | OCR counts it as a file it couldn't read. Tools show "This PDF is damaged" or "too large for this phone". |
+| U3 | Medium | Plausible (traced), fixed | `data/ocr/DocumentOcr.kt` | OCR rewrites the PDF in place with mode `wt`. If writing fails after the file is emptied (full SD card, a provider erroring), the user's only copy is lost. | The original bytes, still in the cache, are written back. Not reproduced: the failure can't be forced on the emulator. |
+| U4 | Medium | Confirmed on emulator, fixed | `data/ocr/DocumentOcr.kt` | A PDF with no readable text (blank, photos, every page sideways) was rewritten and reported as "now searchable". Search would then find nothing. | Says "Dock couldn't find any text in X" and leaves the file alone. |
+| U5 | Low | Confirmed on emulator, fixed | `data/ocr/DocumentOcr.kt` | Stopping "Make all searchable" before any PDF finished said "Every PDF was already searchable". | Says "Stopped". |
+| U6 | Low | Confirmed on emulator, fixed | `ui/editor/PageEditorScreen.kt` | The Edit text tab said OCR was "coming in a later version". | Reworded: it's editing that's still to come. |
+
+Also added: failed OCR runs are now logged. U1 left nothing in logcat, and its toast ended in ": null".
+
+**New test:** `core/pdf/.../GlyphlessFontTest.kt` checks the font resolves by its full path. It guards the path only: R8 itself isn't exercised by any test, so U1-style bugs still need a run on a release build. U2 to U5 have no automated test (they need a device and a storage provider) and were verified by hand, except U3.
+
+**Checked on the release build, all working:** OCR on 11 imported PDFs (classic and compressed cross-references, inherited or shared resources, crop boxes, rotations that display upright, skewed text, a 40-page file, a poster, mixed typed and scanned pages), compared with PyMuPDF, pypdf and pdftotext for text, word position and identical page images, plus blank, typed, sideways, password-protected, truncated, non-PDF and malformed files; the OCR switch, Stop and Make all; the viewer staying stable while OCR rewrites the open file; kept file dates; camera with live detection, Retake, all editor tools, save and replace with OCR re-running; Compress, Merge, Split and PDF to images, with the text layer surviving; all 11 document formats; resizing in the Images tab and Images to PDF; folders, rename, move, delete and search; About and every license; Share. The APK requests only the camera (no `INTERNET`), and all native libraries are 16 KB aligned.
+
+**Ruled out:** the Shelf-to-Files jump after creating a folder only happens with hardware-style key input (see backlog). Scrolling a PDF while OCR rewrites it doesn't crash or blank pages.
+
+**Backlog (Low, not fixed):**
+- A merge that starts with a Dock scan is labelled as made by Dock, so re-running OCR on it also reads its typed pages and doubles their hidden text (`PdfTextLayer.pagesWithoutText`).
+- Saving an edit while OCR is running on that same file drops the new OCR request, so the edited PDF stays without text.
+- A process kill while OCR writes back can leave a partial file (a window of milliseconds; SAF has no atomic replace). Copies in `cache/ocr` also stay behind after a kill.
+- If the last queued OCR task is stopped in the instant between two tasks, the models stay loaded and the bulk counters carry over to the next run.
+- With a physical keyboard, focus can jump the tab pager from Shelf to Files when a dialog closes.
+- PDFs that are restricted but open without a password don't offer OCR.
+- The camera's "Review 1 pages" accessibility label.
+- Status-bar icons sit directly on top of list rows on the tool lists.
+
+**Known limit, already on the roadmap:** sideways and upside-down pages get no text.
+
+**Not covered:** a real arm64 phone (real paper, real speed, memory pressure, manual focus), low-memory devices, Android versions other than 16, and Play's delivered split APKs.
+
+**Oracles after the fixes:** release build OK, lint 0 errors in all five modules, 104 unit tests and 22 on-device tests passing.
+
+---
+
 ## Third pass (2026-10-28): `89de23e` and later
 
 Scope: everything added since the last review, about 12,600 lines in the commit "camera focus controls, Images tab, document preview and swipeable pages". It added the new `core:office` module, the exported "Open with Dock" activity, the camera session, the Images tab, the tool flows and the editor pager. Every file was read whole. The Office readers and the preview were also read through a security lens, because they now take files from any app.

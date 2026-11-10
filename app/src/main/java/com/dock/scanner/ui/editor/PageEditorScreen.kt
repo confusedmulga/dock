@@ -267,7 +267,7 @@ fun PageEditorScreen(
                 ) { active ->
                     when (active) {
                         EditorTool.EditText -> InfoPanel(
-                            "Editing text needs text recognition (OCR), which is coming in a later version.",
+                            "Editing a page's text is coming in a later version.",
                         )
                         EditorTool.Filters -> FiltersPanel(
                             selected = page.filter,

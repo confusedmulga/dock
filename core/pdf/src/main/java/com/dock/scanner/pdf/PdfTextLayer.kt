@@ -60,6 +60,9 @@ object PdfTextLayer {
     /** Pages with fewer letters and digits than this count as having no text of their own (stray page numbers, stamps). */
     private const val MIN_OWN_TEXT = 20
 
+    /** The full path, because R8 renames this class: a path relative to it fails in release builds. */
+    internal const val GLYPHLESS_FONT = "com/dock/scanner/pdf/glyphless.ttf"
+
     fun info(doc: PDDocument): Info = Info(
         madeByDock = doc.documentInformation.producer == DOCK_PRODUCER,
         hasLayer = doc.pages.any { page -> markedStreams(page).isNotEmpty() },
@@ -208,7 +211,8 @@ object PdfTextLayer {
      * wide. It only exists so viewers can place, select and copy the text.
      */
     private fun glyphlessFont(doc: PDDocument): COSDictionary {
-        val ttf = PdfTextLayer::class.java.getResourceAsStream("glyphless.ttf")!!.use { it.readBytes() }
+        val ttf = (PdfTextLayer::class.java.classLoader?.getResourceAsStream(GLYPHLESS_FONT) ?: error("$GLYPHLESS_FONT is missing"))
+            .use { it.readBytes() }
         val fontFile = doc.document.createCOSStream().apply {
             setInt(COSName.LENGTH1, ttf.size)
             createOutputStream(COSName.FLATE_DECODE).use { it.write(ttf) }
