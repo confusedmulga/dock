@@ -87,13 +87,16 @@ data class SheetLayout(val paper: Paper, val landscape: Boolean, val items: List
 
     /** Keeps a page of [imageAspect] entirely on the sheet: limits its size, then its position. */
     fun clamp(placement: Placement, imageAspect: Float): Placement {
-        val width = placement.width.coerceIn(0.05f, minOf(1f, imageAspect / aspect))
+        // The widest the page fits. A very thin strip can't even be MIN_WIDTH wide: it gets what fits.
+        val widest = minOf(1f, imageAspect / aspect)
+        val width = placement.width.coerceIn(minOf(MIN_WIDTH, widest), widest)
         val halfW = width / 2
         val halfH = width * aspect / imageAspect / 2
         return placement.copy(
             width = width,
-            centerX = placement.centerX.coerceIn(halfW, 1f - halfW),
-            centerY = placement.centerY.coerceIn(halfH, 1f - halfH),
+            // maxOf: at the widest fit, rounding can leave a half a hair over 0.5, which would be an empty range.
+            centerX = placement.centerX.coerceIn(halfW, maxOf(halfW, 1f - halfW)),
+            centerY = placement.centerY.coerceIn(halfH, maxOf(halfH, 1f - halfH)),
         )
     }
 
@@ -102,6 +105,9 @@ data class SheetLayout(val paper: Paper, val landscape: Boolean, val items: List
         copy(items = items.map { p -> aspectOf(p.pageId)?.let { clamp(p, it) } ?: p })
 
     companion object {
+        /** The smallest a page can be made on a sheet, as a fraction of the sheet's width. */
+        const val MIN_WIDTH = 0.08f
+
         /** Largest width fraction at which an image of [imageAspect] fits the sheet with a margin. */
         fun fitWidth(imageAspect: Float, sheetAspect: Float, margin: Float = 0.92f): Float =
             minOf(margin, margin * imageAspect / sheetAspect)

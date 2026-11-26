@@ -22,12 +22,14 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,16 +58,15 @@ import com.dock.scanner.ui.components.viewFile
 import com.dock.scanner.ui.files.FilesScreen
 import com.dock.scanner.ui.home.HomeScreen
 import com.dock.scanner.ui.home.HomeTool
-import com.dock.scanner.ui.images.ImagesScreen
-import com.dock.scanner.ui.images.ImagesViewModel
 import com.dock.scanner.ui.shelf.ShelfScreen
 import com.dock.scanner.ui.tools.PdfTool
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
+import kotlinx.coroutines.launch
 
 /**
- * Home (tools), Images (the image resizer), Files (every PDF and document) and Shelf
- * (folders), swiped between or picked on the floating glass island, plus the scan button.
+ * Home (tools), Files (every PDF and document) and Shelf (folders), swiped between or picked
+ * on the floating glass island, plus the scan button.
  * Content scrolls underneath the island, which blurs whatever passes behind it.
  */
 @Composable
@@ -79,11 +80,11 @@ fun MainShell(
     onOpenTool: (PdfTool, LibraryItem?) -> Unit,
     onChangeLocation: () -> Unit,
     onAbout: () -> Unit,
+    onResizeImages: () -> Unit,
 ) {
     val context = LocalContext.current
     val tab by vm.tab.collectAsStateWithLifecycle()
     val hazeState = remember { HazeState() }
-    val imagesVm: ImagesViewModel = viewModel()
     val pager = rememberPagerState(initialPage = tab.ordinal) { MainTab.entries.size }
     // Tab changes made elsewhere (the island, "See all", a tool opening the Shelf) move the pager...
     LaunchedEffect(tab) {
@@ -96,6 +97,13 @@ fun MainShell(
     val dialogs = rememberItemDialogState()
     val destinations by vm.destinations.collectAsStateWithLifecycle()
     val shelfPath by vm.shelfPath.collectAsStateWithLifecycle()
+    // Each tab's scroll position lives here, so tapping the tab you're already on can scroll it back to the top.
+    val scope = rememberCoroutineScope()
+    val lists = MainTab.entries.associateWith { rememberLazyListState() }
+    fun select(picked: MainTab) {
+        if (picked == tab && pager.settledPage == picked.ordinal) scope.launch { lists.getValue(picked).animateScrollToItem(0) }
+        else vm.tab.value = picked
+    }
 
     // Files may have changed in a file manager while we were away.
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.refresh() }
@@ -159,14 +167,20 @@ fun MainShell(
                                     HomeTool.Split -> onOpenTool(PdfTool.Split, null)
                                     HomeTool.ImagesToPdf -> pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                                     HomeTool.ViewDocuments -> pickDocument.launch(OfficeFormat.mimeTypes.toTypedArray())
+                                    HomeTool.ResizeImages -> onResizeImages()
                                 }
                             },
                             onSeeAllFiles = { vm.tab.value = MainTab.Files },
                             onAbout = onAbout,
+                            listState = lists.getValue(current),
                         )
-                        MainTab.Images -> ImagesScreen(imagesVm, bottomInset, onShowFolder = vm::showInShelf)
-                        MainTab.Files -> FilesScreen(vm, actions, bottomInset)
-                        MainTab.Shelf -> ShelfScreen(vm, actions, dialogs, bottomInset, onChangeLocation)
+                        // The pager keeps neighbouring tabs composed: only the tab in front may answer the back button.
+                        MainTab.Files -> FilesScreen(vm, actions, bottomInset, active = tab == current, listState = lists.getValue(current))
+                        MainTab.Shelf -> ShelfScreen(
+                            vm, actions, dialogs, bottomInset, onChangeLocation,
+                            active = tab == current,
+                            listState = lists.getValue(current),
+                        )
                     }
                 }
             }
@@ -182,7 +196,7 @@ fun MainShell(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             // The highlight moves as soon as a swipe or tap commits to a tab.
-            GlassIsland(hazeState, selected = MainTab.entries[pager.targetPage], onSelect = { vm.tab.value = it })
+            GlassIsland(hazeState, selected = MainTab.entries[pager.targetPage], onSelect = ::select)
             Spacer(Modifier.width(10.dp))
             GlassBubble(
                 hazeState,

@@ -8,7 +8,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -29,11 +28,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -62,12 +62,14 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.geometry.Offset
@@ -92,8 +94,11 @@ import com.dock.scanner.ui.ScanViewModel
 import com.dock.scanner.ui.components.EmptyMessage
 import com.dock.scanner.ui.components.GlassBubble
 import com.dock.scanner.ui.components.LargeTitle
+import com.dock.scanner.ui.components.NameDialog
 import com.dock.scanner.ui.components.SharedKeys
 import com.dock.scanner.ui.components.StatusBarBlur
+import com.dock.scanner.ui.components.fileNameProblem
+import com.dock.scanner.ui.components.isValidFileName
 import com.dock.scanner.ui.components.sharedPage
 import com.dock.scanner.ui.theme.DockMotion
 import dev.chrisbanes.haze.HazeState
@@ -126,6 +131,8 @@ fun ReviewScreen(
         if (uris.isNotEmpty()) scanVm.importImages(uris)
     }
     fun leave() = when {
+        // The PDF is being written from these pages: they stay as they are until it's done.
+        saving -> Unit
         reordering -> scanVm.reorderMode.value = false
         all.isEmpty() -> onFinished()
         else -> confirmDiscard = true
@@ -227,13 +234,13 @@ fun ReviewScreen(
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (!reordering) {
-                            TextButton(onClick = ::leave, contentPadding = PaddingValues(horizontal = 6.dp)) { Text("Cancel") }
+                            TextButton(onClick = ::leave, enabled = !saving, contentPadding = PaddingValues(horizontal = 6.dp)) { Text("Cancel") }
                         }
                         Spacer(Modifier.weight(1f))
                         if (reordering) {
                             TextButton(onClick = { scanVm.reorderMode.value = false }) { Text("Done") }
                         } else if (pages.size > 1) {
-                            TextButton(onClick = { scanVm.reorderMode.value = true }) { Text("Reorder") }
+                            TextButton(onClick = { scanVm.reorderMode.value = true }, enabled = !saving) { Text("Reorder") }
                         }
                     }
                     LargeTitle(
@@ -253,7 +260,7 @@ fun ReviewScreen(
             }
             if (pages.isEmpty()) {
                 item(span = { GridItemSpan(maxLineSpan) }, key = "empty") {
-                    EmptyMessage("No pages", "Add pages with the camera or from your photos.")
+                    EmptyMessage("No pages", "Add pages with the camera or from your photos.", icon = painterResource(R.drawable.ic_add_page))
                 }
             }
             itemsIndexed(pages, key = { _, p -> p.id }) { i, page ->
@@ -263,6 +270,7 @@ fun ReviewScreen(
                     page = page,
                     pagesById = pagesById,
                     reordering = reordering,
+                    enabled = !saving,
                     onClick = { onOpenPage(page.id) },
                     modifier = Modifier
                         .then(if (dragging) Modifier else Modifier.animateItem())
@@ -297,10 +305,15 @@ fun ReviewScreen(
                     hazeState,
                     painterResource(R.drawable.ic_gallery),
                     contentDescription = "Add pages from photos",
-                    onClick = { pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                    onClick = { if (!saving) pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                 )
                 Spacer(Modifier.width(10.dp))
-                GlassBubble(hazeState, painterResource(R.drawable.ic_camera), contentDescription = "Add pages with the camera", onClick = onAddPages)
+                GlassBubble(
+                    hazeState,
+                    painterResource(R.drawable.ic_camera),
+                    contentDescription = "Add pages with the camera",
+                    onClick = { if (!saving) onAddPages() },
+                )
                 Spacer(Modifier.width(10.dp))
                 SaveCapsule(enabled = pages.isNotEmpty() && !saving, busy = saving, onClick = { saveSheet = true })
             }
@@ -315,6 +328,7 @@ fun ReviewScreen(
             preselected = scanVm.targetFolderId,
             canReplace = original != null,
             onDismiss = { saveSheet = false },
+            onCreateFolder = libraryVm::createDestination,
             onSave = { name, destination, replace ->
                 saveSheet = false
                 val done = { where: String ->
@@ -324,7 +338,7 @@ fun ReviewScreen(
                 }
                 if (replace && original != null) {
                     scanVm.saveOverOriginal(libraryVm.library, original, name) { done("Saved “$it”") }
-                } else {
+                } else if (destination != null) {
                     scanVm.saveToLibrary(libraryVm.library, root!!, destination.documentId, name) { done("Saved to ${destination.name}") }
                 }
             },
@@ -345,6 +359,8 @@ fun ReviewScreen(
                 TextButton(onClick = {
                     confirmDiscard = false
                     scanVm.clear()
+                    // The next scan starts fresh: it isn't headed for this one's folder.
+                    scanVm.targetFolderId = null
                     onFinished()
                 }) { Text("Discard", color = MaterialTheme.colorScheme.error) }
             },
@@ -391,14 +407,20 @@ private fun SaveSheet(
     preselected: String?,
     canReplace: Boolean,
     onDismiss: () -> Unit,
-    onSave: (String, Destination, Boolean) -> Unit,
+    /** Makes a folder in the Dock folder and hands it back, to save straight into it. */
+    onCreateFolder: (String, (Destination) -> Unit) -> Unit,
+    /** The destination is only null when replacing the original, which stays where it is. */
+    onSave: (String, Destination?, Boolean) -> Unit,
 ) {
     var name by remember { mutableStateOf(suggestedName) }
     var replace by remember { mutableStateOf(canReplace) }
-    var target by remember(destinations) {
-        mutableStateOf(destinations.firstOrNull { it.documentId == preselected } ?: destinations.firstOrNull())
-    }
-    val valid = name.isNotBlank() && name.none { it in "/\\:*?\"<>|" } && target != null
+    // Kept by ID: the list of folders reloads (e.g. when one is created here), and the choice has to survive that.
+    var targetId by remember { mutableStateOf(preselected) }
+    val target = destinations.firstOrNull { it.documentId == targetId } ?: destinations.firstOrNull()
+    var creatingFolder by remember { mutableStateOf(false) }
+    val problem = fileNameProblem(name)
+    val valid = isValidFileName(name) && (replace || target != null)
+    val save = { if (valid) onSave(name.trim(), target, replace) }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
             Text("Save PDF", style = MaterialTheme.typography.titleLarge)
@@ -409,7 +431,10 @@ private fun SaveSheet(
                 label = { Text("Name") },
                 singleLine = true,
                 suffix = { Text(".pdf") },
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                isError = problem != null,
+                supportingText = problem?.let { { Text(it) } },
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { save() }),
                 modifier = Modifier.fillMaxWidth(),
             )
             if (canReplace) {
@@ -430,14 +455,32 @@ private fun SaveSheet(
                 }
             }
             if (!replace) {
-                Spacer(Modifier.height(18.dp))
-                Text("Save to", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(6.dp))
-                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    destinations.forEachIndexed { i, destination ->
+                Spacer(Modifier.height(8.dp))
+                // "New folder" sits on the heading, where it's in view however many folders the row below scrolls through.
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Save to",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { creatingFolder = true }, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                        Icon(painterResource(R.drawable.ic_folder_add), contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("New folder")
+                    }
+                }
+                // The chosen folder is brought into view: one just created, or the Shelf folder the scan
+                // was started from, can sit well past the edge of the row.
+                val chips = rememberLazyListState()
+                val chosen = destinations.indexOf(target)
+                LaunchedEffect(chosen, destinations.size) { if (chosen >= 0) chips.animateScrollToItem(chosen) }
+                LazyRow(state = chips, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(destinations.size, key = { destinations[it].documentId }) { i ->
+                        val destination = destinations[i]
                         FilterChip(
                             selected = destination == target,
-                            onClick = { target = destination },
+                            onClick = { targetId = destination.documentId },
                             label = { Text(if (i == 0) "${destination.name} (main)" else destination.name) },
                             leadingIcon = { Icon(painterResource(R.drawable.ic_folder), contentDescription = null, modifier = Modifier.size(18.dp)) },
                         )
@@ -445,12 +488,20 @@ private fun SaveSheet(
                 }
             }
             Spacer(Modifier.height(24.dp))
-            Button(
-                onClick = { onSave(name.trim(), target!!, replace) },
-                enabled = valid,
-                modifier = Modifier.fillMaxWidth().height(52.dp),
-            ) { Text("Save") }
+            Button(onClick = save, enabled = valid, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("Save") }
         }
+    }
+    if (creatingFolder) {
+        NameDialog(
+            title = "New folder",
+            initial = "",
+            confirm = "Create",
+            onConfirm = { folder ->
+                creatingFolder = false
+                onCreateFolder(folder) { created -> targetId = created.documentId }
+            },
+            onDismiss = { creatingFolder = false },
+        )
     }
 }
 
@@ -460,6 +511,7 @@ private fun PageCard(
     page: Page,
     pagesById: Map<String, Page>,
     reordering: Boolean,
+    enabled: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -471,7 +523,7 @@ private fun PageCard(
             .aspectRatio(0.75f)
             .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceContainerLow)
-            .then(if (reordering) Modifier else Modifier.clickable(onClickLabel = "Edit page $number", onClick = onClick))
+            .then(if (reordering) Modifier else Modifier.clickable(enabled = enabled, onClickLabel = "Edit page $number", onClick = onClick))
             .padding(10.dp),
         contentAlignment = Alignment.Center,
     ) {

@@ -1,3 +1,5 @@
 <resources>
     <color name="ic_launcher_background">#FFFFFF</color>
+    <!-- What shows while the app starts: the theme's surface, so the first frame doesn't flash from white. -->
+    <color name="window_background">#F9F9FF</color>
 </resources>

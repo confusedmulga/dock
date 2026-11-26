@@ -78,35 +78,42 @@ class ImagesViewModel(app: Application) : AndroidViewModel(app) {
     private val _loading = MutableStateFlow(false)
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
 
+    /** Batches of pictures being read right now: picking more while one loads mustn't end "loading" early. */
+    private var loads = 0
+
     fun add(uris: List<Uri>) {
         if (uris.isEmpty()) return
+        loads++
         _loading.value = true
         viewModelScope.launch {
-            val added = withContext(Dispatchers.IO) {
-                uris.mapNotNull { uri ->
-                    runCatching {
-                        var name = "Image"
-                        var size = 0L
-                        resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { c ->
-                            if (c.moveToFirst()) {
-                                c.getString(0)?.let { name = it }
-                                if (!c.isNull(1)) size = c.getLong(1)
-                            }
-                        }
-                        val (w, h) = ImageResizer.size(resolver, uri)
-                        ImageInput(uri, name, w, h, size)
-                    }.getOrNull()
-                }
+            try {
+                val added = withContext(Dispatchers.IO) { uris.mapNotNull(::describe) }
+                val first = _inputs.value.isEmpty()
+                _inputs.update { list -> list + added.filter { new -> list.none { it.uri == new.uri } } }
+                if (added.size < uris.size) _state.value = ResizeState.Failed("Some files couldn't be read as images")
+                else if (_state.value !is ResizeState.Working) _state.value = ResizeState.Idle
+                // Sizes in pixels or physical units start from the first picture, as on the website.
+                if (first && _form.value.unit != SizeUnit.Percent) setUnit(_form.value.unit)
+            } finally {
+                loads--
+                _loading.value = loads > 0
             }
-            val first = _inputs.value.isEmpty()
-            _inputs.update { list -> list + added.filter { new -> list.none { it.uri == new.uri } } }
-            if (added.size < uris.size) _state.value = ResizeState.Failed("Some files couldn't be read as images")
-            else if (_state.value !is ResizeState.Working) _state.value = ResizeState.Idle
-            // Sizes in pixels or physical units start from the first picture, as on the website.
-            if (first && _form.value.unit != SizeUnit.Percent) setUnit(_form.value.unit)
-            _loading.value = false
         }
     }
+
+    /** A picked picture's name, size on disk and pixel size; null when it can't be read as an image. */
+    private fun describe(uri: Uri): ImageInput? = runCatching {
+        var name = "Image"
+        var size = 0L
+        resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { c ->
+            if (c.moveToFirst()) {
+                c.getString(0)?.let { name = it }
+                if (!c.isNull(1)) size = c.getLong(1)
+            }
+        }
+        val (w, h) = ImageResizer.size(resolver, uri)
+        ImageInput(uri, name, w, h, size)
+    }.getOrNull()
 
     fun remove(input: ImageInput) {
         _inputs.update { list -> list.filterNot { it.uri == input.uri } }

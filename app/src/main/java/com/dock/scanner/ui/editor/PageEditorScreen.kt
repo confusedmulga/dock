@@ -19,6 +19,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -30,9 +31,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
@@ -42,6 +41,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -69,7 +69,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
@@ -84,6 +83,7 @@ import com.dock.scanner.core.PageFilter
 import com.dock.scanner.core.Quad
 import com.dock.scanner.data.Page
 import com.dock.scanner.data.Paper
+import com.dock.scanner.data.SheetLayout
 import com.dock.scanner.data.StrokeKind
 import com.dock.scanner.ui.ScanViewModel
 import com.dock.scanner.ui.components.SharedKeys
@@ -98,7 +98,7 @@ import kotlin.math.roundToInt
 enum class EditorTool(val label: String, @param:DrawableRes val icon: Int) {
     Retake("Retake", R.drawable.ic_retake),
     Crop("Crop", R.drawable.ic_crop),
-    EditText("Edit text", R.drawable.ic_text),
+    Rotate("Rotate", R.drawable.ic_rotate_right),
     Filters("Filters", R.drawable.ic_filter),
     Bright("Bright", R.drawable.ic_brightness),
     Eraser("Eraser", R.drawable.ic_eraser),
@@ -155,6 +155,8 @@ fun PageEditorScreen(
     var penWidth by rememberSaveable { mutableFloatStateOf(0.008f) }
     var penOpacity by rememberSaveable { mutableFloatStateOf(1f) }
     var selectedOnSheet by remember(page.id) { mutableStateOf<String?>(page.id) }
+    /** The page the trash button was tapped on; deleting can't be undone, so it asks first. */
+    var deleting by remember { mutableStateOf<String?>(null) }
 
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerLowest)) {
         // Top bar: where am I, how do I get out.
@@ -173,7 +175,7 @@ fun PageEditorScreen(
             if (page.processing) CircularProgressIndicator(Modifier.size(20.dp).padding(end = 4.dp), strokeWidth = 2.dp)
             if (tool == null) {
                 // The pager then shows the next page (or the previous one, after the last); the editor closes with the last page.
-                IconButton(onClick = { vm.delete(page.id) }) { Icon(Icons.Filled.Delete, contentDescription = "Delete page") }
+                IconButton(onClick = { deleting = page.id }) { Icon(Icons.Filled.Delete, contentDescription = "Delete page") }
             }
         }
 
@@ -266,9 +268,6 @@ fun PageEditorScreen(
                     label = "toolPanel",
                 ) { active ->
                     when (active) {
-                        EditorTool.EditText -> InfoPanel(
-                            "Editing a page's text is coming in a later version.",
-                        )
                         EditorTool.Filters -> FiltersPanel(
                             selected = page.filter,
                             forAll = vm.filterForAll.collectAsStateWithLifecycle().value,
@@ -324,13 +323,37 @@ fun PageEditorScreen(
                     onTool = { picked ->
                         picking = false
                         when (picked) {
+                            // One-tap actions: they act on the page and leave the open panel alone.
                             EditorTool.Retake -> onRetake(page.id)
+                            EditorTool.Rotate -> vm.rotateClockwise(page.id)
                             else -> tool = if (tool == picked) null else picked
                         }
                     },
                 )
             }
         }
+    }
+
+    deleting?.let { id ->
+        val number = sheets.indexOfFirst { it.id == id } + 1
+        val sharesSheet = sheets.firstOrNull { it.id == id }?.layout?.items.orEmpty().size > 1
+        AlertDialog(
+            onDismissRequest = { deleting = null },
+            title = { Text(if (number > 0) "Delete page $number?" else "Delete this page?") },
+            text = {
+                Text(
+                    if (sharesSheet) "The page and its edits are removed from this scan. The other pages on its sheet become pages of their own again."
+                    else "The page and its edits are removed from this scan. This can't be undone.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    deleting = null
+                    vm.delete(id)
+                }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { deleting = null }) { Text("Cancel") } },
+        )
     }
 }
 
@@ -384,46 +407,41 @@ private fun PageStrip(sheets: List<Page>, pagesById: Map<String, Page>, currentI
     }
 }
 
+/** Every tool on screen at once, sharing the width; a very narrow screen scrolls instead of squeezing the labels. */
 @Composable
 private fun ToolBar(active: EditorTool?, onTool: (EditorTool) -> Unit) {
-    LazyRow(
-        Modifier.fillMaxWidth(),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 6.dp),
-    ) {
-        items(EditorTool.entries) { t -> ToolButton(t, selected = t == active, onClick = { onTool(t) }) }
+    BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 6.dp)) {
+        val each = maxOf(maxWidth / EditorTool.entries.size, 46.dp)
+        Row(Modifier.horizontalScroll(rememberScrollState())) {
+            EditorTool.entries.forEach { t -> ToolButton(t, selected = t == active, onClick = { onTool(t) }, modifier = Modifier.width(each)) }
+        }
     }
 }
 
 @Composable
-private fun ToolButton(tool: EditorTool, selected: Boolean, onClick: () -> Unit) {
+private fun ToolButton(tool: EditorTool, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(if (pressed) 0.9f else 1f, DockMotion.press(), label = "toolScale")
     val tint = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
     Column(
-        Modifier
+        modifier
             .graphicsLayer { scaleX = scale; scaleY = scale }
-            .widthIn(min = 68.dp)
             .clip(MaterialTheme.shapes.large)
             .background(if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
             .clickable(interaction, indication = null, role = Role.Tab, onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 8.dp),
+            .padding(horizontal = 2.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Icon(painterResource(tool.icon), contentDescription = null, tint = tint, modifier = Modifier.size(24.dp))
         Spacer(Modifier.height(4.dp))
-        Text(tool.label, style = MaterialTheme.typography.labelMedium, color = tint, maxLines = 1)
+        Text(tool.label, style = MaterialTheme.typography.labelMedium, color = tint, maxLines = 1, softWrap = false)
     }
 }
 
 @Composable
 private fun PanelColumn(content: @Composable () -> Unit) {
     Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 4.dp)) { content() }
-}
-
-@Composable
-private fun InfoPanel(text: String) = PanelColumn {
-    Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 @Composable
@@ -554,19 +572,24 @@ private fun MarkupPanel(
     Row(verticalAlignment = Alignment.CenterVertically) {
         Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
             PenColors.forEach { c -> Swatch(c, selected = c == color, onClick = { onColor(c) }, size = 32) }
-            // Custom color: a hue ring, showing the chosen color in the middle when it isn't a preset.
+            // Any other color: a plus until one is picked, then that color, outlined like a chosen preset.
+            val custom = color !in PenColors
             Box(
                 Modifier
                     .size(32.dp)
                     .clip(CircleShape)
-                    .background(Brush.sweepGradient((0..6).map { Color(android.graphics.Color.HSVToColor(floatArrayOf(it * 60f, 1f, 1f))) }))
-                    .clickable { customOpen = true },
+                    .background(if (custom) Color(color) else MaterialTheme.colorScheme.surfaceContainerHighest)
+                    .border(
+                        if (custom) 3.dp else 1.dp,
+                        if (custom) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                        CircleShape,
+                    )
+                    .clickable(onClickLabel = "Pick another color") { customOpen = true },
                 contentAlignment = Alignment.Center,
             ) {
-                Box(
-                    Modifier.size(18.dp).clip(CircleShape)
-                        .background(if (color in PenColors) MaterialTheme.colorScheme.surfaceContainer else Color(color)),
-                )
+                if (!custom) {
+                    Icon(Icons.Filled.Add, contentDescription = "Custom color", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                }
             }
         }
     }
@@ -629,7 +652,7 @@ private fun AdjustPanel(
             "Size",
             selected.width,
             "${(selected.width * 100).roundToInt()}%",
-            MIN_WIDTH..1f,
+            SheetLayout.MIN_WIDTH..1f,
             onChange = { vm.updatePlacement(page.id, selected.copy(width = it)) },
         )
     } else {

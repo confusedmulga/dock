@@ -46,6 +46,14 @@ enum class ScanMode(val label: String) {
     Standard("Standard"),
 }
 
+/** How the Files tab is ordered. */
+enum class FileSort(val label: String) {
+    Newest("Newest first"),
+    Oldest("Oldest first"),
+    Name("Name"),
+    Largest("Largest first"),
+}
+
 /** Preferences that outlive a session. */
 class DockSettings(context: Context) {
 
@@ -68,7 +76,20 @@ class DockSettings(context: Context) {
         get() = prefs.getBoolean(KEY_OCR_NEW_SCANS, true)
         set(value) = prefs.edit { putBoolean(KEY_OCR_NEW_SCANS, value) }
 
+    /** Whether the PDF viewer shows its sidebar of page thumbnails. */
+    var viewerSidebar: Boolean
+        get() = prefs.getBoolean(KEY_VIEWER_SIDEBAR, true)
+        set(value) = prefs.edit { putBoolean(KEY_VIEWER_SIDEBAR, value) }
+
+    var fileSort: FileSort
+        get() = prefs.getString(KEY_FILE_SORT, null)
+            ?.let { name -> FileSort.entries.firstOrNull { it.name == name } }
+            ?: FileSort.Newest
+        set(value) = prefs.edit { putString(KEY_FILE_SORT, value.name) }
+
     private companion object {
+        const val KEY_FILE_SORT = "file_sort"
+        const val KEY_VIEWER_SIDEBAR = "viewer_sidebar"
         const val KEY_SCAN_QUALITY = "scan_quality"
         const val KEY_SCAN_MODE = "scan_mode"
         const val KEY_OCR_NEW_SCANS = "ocr_new_scans"

@@ -6,7 +6,18 @@ Point the camera at a page and Dock finds the edges, straightens the page, clean
 saves a searchable PDF. No account, no cloud, no network access: the app doesn't even request the
 `INTERNET` permission. Text recognition runs on the phone, with small models built into the app.
 
-## Features (prototype)
+## New in 1.3.1
+
+- **PDF viewer**: a sidebar of page thumbnails, **rearranging pages** (long-press a thumbnail, confirm, drag,
+  save with the tick), **text selection** with copy and share, and **search** with every match highlighted.
+  Scanned pages without a text layer are read on the phone when you select or search them
+- A quieter look: one accent color, no gradients, rounded menus; Home's tools as a single list
+- The image resizer moved from its own tab to Home (**Resize images**); the island has Home, Files and Shelf
+- Files can be sorted by date, name or size; the page editor has a Rotate tool
+- Fixes: back on Files and Shelf, the camera's status bar and permission prompt, a crash with very thin pages on a
+  paper sheet, hidden dot-names, and more (see [REVIEW.md](REVIEW.md))
+
+## Features
 
 - Live page outline in the camera preview, or **Standard** mode that keeps the whole 4:3 frame.
   OpenCV finds the edges and a small learned corner model (DocAligner) double-checks them: it
@@ -21,12 +32,17 @@ saves a searchable PDF. No account, no cloud, no network access: the app doesn't
   Switch it per PDF from its menu, **Run OCR** on PDFs from elsewhere, or **Make all searchable** in Files.
   Adding or removing the text doesn't change the date a file shows
 - Scan quality: Standard (small, print-ready) or Original (full resolution, no extra compression)
-- **Home**: tools — scan, edit PDF, compress (presets, custom DPI or a target file size), PDF to images, merge, split, images to PDF
-- **Images**: resize photos by percent, pixels, cm or inches, set DPI, crop/fit/stretch, save as JPG, PNG or GIF
-- **Files**: every PDF and document, newest first, with search · **Shelf**: organise them into folders
+- **Home**: tools — scan, edit PDF, compress (presets, custom DPI or a target file size), PDF to images, merge, split, images to PDF,
+  and **resize images** (percent, pixels, cm or inches, DPI, crop/fit/stretch, JPG, PNG or GIF)
+- **Files**: every PDF and document, with search; newest first, or sorted by age, name or size · **Shelf**: organise them into folders
 - The tabs swipe sideways, like braim
-- Page editor: swipe between pages, pinch or double-tap to zoom; crop, filters, brightness/contrast, eraser, markup, paper sizes, multi-page sheets
-- Built-in PDF viewer; share, rename, move and delete from the list
+- Page editor: swipe between pages, pinch or double-tap to zoom; crop, rotate, filters, brightness/contrast, eraser, markup, paper sizes, multi-page sheets
+- Built-in PDF viewer, also for PDFs opened from other apps:
+  - a sidebar of page thumbnails; long-press one to **rearrange the pages** (after a confirmation), then save with the tick
+  - **select text**: long-press a word, drag to select more, then copy or share it. Scanned pages without a text layer are
+    read on the phone first, so their text can be selected too
+  - **search** the PDF's text, with every match highlighted
+  - a page counter; share, rename, move and delete from the menus
 - Document preview, also as "Open with Dock" from other apps: Word (.docx, .doc, .rtf, .odt),
   Excel (.xlsx, .xls, .ods, .csv) and PowerPoint (.pptx, .ppt, .odp), read on the device
 
@@ -37,12 +53,12 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) for what's next.
 | Module | What it does |
 |---|---|
 | `core:scanner` | Image pipeline with no UI: `DocumentDetector` (OpenCV edge detection), `CornerModel` (learned fallback), `PageProcessor` (warp, filters), `ImageFilters`, `JpegPdfWriter` (tiny dependency-free PDF writer) |
-| `core:pdf` | PDF operations that keep text and vectors: merge, split, compress, Dock's invisible OCR text layer (PdfBox-Android) |
+| `core:pdf` | PDF operations that keep text and vectors: merge, split, compress, reorder pages, Dock's invisible OCR text layer, and where each character of a page's text is (`PdfTextReader`, `PdfPageText`) for selecting and searching it (PdfBox-Android) |
 | `core:ocr` | On-device text recognition: PaddleOCR PP-OCRv5 mobile models on ONNX Runtime, with word positions for the PDF text layer |
 | `third_party/onnxruntime` | ONNX Runtime 1.31.0 built from source with only the operators Dock's models use (~4 MB instead of ~34 MB per device), and how to rebuild it |
 | `tools/models` | Where the models come from, their licenses, and the scripts that make the shipped files |
 | `core:office` | Readers for Office and OpenDocument files (no dependencies: zip + XML for the modern formats, the compound file format for .doc/.xls/.ppt) into a simple model the app draws |
-| `app` | Compose UI: storage setup, main shell (glass island with swipeable Home / Images / Files / Shelf tabs + camera bubble), camera, review + save, page editor, PDF viewer, document preview, image resizer. `data/storage/DockLibrary` wraps the Storage Access Framework |
+| `app` | Compose UI: storage setup, main shell (glass island with swipeable Home / Files / Shelf tabs + camera bubble), camera, review + save, page editor, PDF viewer (thumbnails, rearranging, text selection, search), document preview, image resizer. `data/storage/DockLibrary` wraps the Storage Access Framework |
 
 ## Building
 
@@ -51,8 +67,10 @@ Requirements: Android Studio (or JDK 17 + Android SDK 36).
 ```bash
 ./gradlew :app:assembleDebug          # build
 ./gradlew :app:installDebug           # install on a connected device / emulator
-./gradlew :core:scanner:testDebugUnitTest                # JVM unit tests
+./gradlew check                       # unit tests and lint for every module
 ./gradlew :core:scanner:connectedDebugAndroidTest        # detector tests on a device
+./gradlew :core:pdf:connectedDebugAndroidTest            # PDF tools, text layer and text positions on a device
+./gradlew :app:bundleRelease          # the Play bundle (signed when keystore.properties is there)
 ```
 
 Min SDK 26 (Android 8.0). The debug APK bundles native code for `arm64-v8a` and `x86_64`.

@@ -53,6 +53,20 @@ import kotlinx.coroutines.launch
 private const val MAX_ZOOM = 5f
 private const val DOUBLE_TAP_ZOOM = 2.5f
 
+/** How far a [ZoomableColumn] is zoomed in and where to; the pages read [scale] to keep handles drawn on them a constant size. */
+@Stable
+class ColumnZoom {
+    var scale by mutableFloatStateOf(1f)
+        internal set
+    var offset by mutableStateOf(Offset.Zero)
+        internal set
+
+    fun reset() {
+        scale = 1f
+        offset = Offset.Zero
+    }
+}
+
 /**
  * A scrolling column of pages that can be pinch-zoomed (up to 5x), double-tapped to zoom in
  * and out, and panned with a fling. At 1x the list scrolls normally; when zoomed, dragging
@@ -60,6 +74,9 @@ private const val DOUBLE_TAP_ZOOM = 2.5f
  * PDFs, documents and slides alike.
  *
  * [content] gets the width available to the pages (inside [contentPadding]).
+ *
+ * @param panBlocked while it says so, one finger belongs to the pages (e.g. dragging a text
+ *   selection): it doesn't pan, and double taps don't zoom. Pinching still does.
  */
 @Composable
 fun ZoomableColumn(
@@ -67,13 +84,16 @@ fun ZoomableColumn(
     contentPadding: PaddingValues = PaddingValues(),
     spacing: Dp = 14.dp,
     listState: LazyListState = rememberLazyListState(),
+    zoom: ColumnZoom = remember { ColumnZoom() },
+    panBlocked: () -> Boolean = { false },
     content: LazyListScope.(pageWidth: Dp) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    var scale by remember { mutableFloatStateOf(1f) }
-    var offset by remember { mutableStateOf(Offset.Zero) }
+    var scale by zoom::scale
+    var offset by zoom::offset
     var viewport by remember { mutableStateOf(IntSize.Zero) }
     var fling by remember { mutableStateOf<Job?>(null) }
+    val blocked by rememberUpdatedState(panBlocked)
 
     // The view is scaled from its top-left corner, so it can move between (1 - scale) × size and 0.
     fun clamp(o: Offset, s: Float) = Offset(
@@ -112,7 +132,7 @@ fun ZoomableColumn(
                             offset = clamp(zoomed, newScale)
                             singlePan = false
                             event.changes.forEach { it.consume() }
-                        } else if (pressed == 1 && scale > 1f) {
+                        } else if (pressed == 1 && scale > 1f && !blocked()) {
                             val change = event.changes.first { it.pressed }
                             velocity.addPosition(change.uptimeMillis, change.position)
                             val delta = change.positionChange()
@@ -143,6 +163,7 @@ fun ZoomableColumn(
             }
             .pointerInput(Unit) {
                 detectTapGestures(onDoubleTap = { tap ->
+                    if (blocked()) return@detectTapGestures
                     fling?.cancel()
                     scope.launch {
                         val startScale = scale

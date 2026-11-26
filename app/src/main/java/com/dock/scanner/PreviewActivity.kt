@@ -30,7 +30,12 @@ import com.dock.scanner.ui.preview.DocumentPreviewModel
 import com.dock.scanner.ui.preview.PreviewContent
 import com.dock.scanner.ui.preview.PreviewFrame
 import com.dock.scanner.ui.theme.DockTheme
-import com.dock.scanner.ui.viewer.ZoomablePdf
+import com.dock.scanner.ui.viewer.PdfViewer
+import com.dock.scanner.ui.components.DockMenuItem
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -59,8 +64,31 @@ class PreviewActivity : ComponentActivity() {
         setContent {
             DockTheme {
                 Surface(color = MaterialTheme.colorScheme.surface) {
+                    if (isPdf) {
+                        // The full viewer: thumbnails, text selection and search. The file is
+                        // the other app's, so it's read only: pages aren't rearranged.
+                        PdfViewer(
+                            uri = uri,
+                            version = 0,
+                            title = name.substringBeforeLast('.'),
+                            onBack = ::finish,
+                            moreItems = { dismiss ->
+                                DockMenuItem(
+                                    text = { Text("Save to Dock") },
+                                    leadingIcon = { Icon(painterResource(R.drawable.ic_folder_add), null) },
+                                    onClick = { dismiss(); saveToDock(uri, name, mime) },
+                                )
+                                DockMenuItem(
+                                    text = { Text("Share") },
+                                    leadingIcon = { Icon(Icons.Filled.Share, null) },
+                                    onClick = { dismiss(); shareDocument(this@PreviewActivity, uri, name, mime ?: DockLibrary.MIME_PDF) },
+                                )
+                            },
+                        )
+                        return@Surface
+                    }
                     val model: DocumentPreviewModel = viewModel()
-                    if (!isPdf) LaunchedEffect(uri) { model.load(uri, name, mime) }
+                    LaunchedEffect(uri) { model.load(uri, name, mime) }
                     val state by model.state.collectAsStateWithLifecycle()
                     PreviewFrame(
                         title = name.substringBeforeLast('.'),
@@ -70,9 +98,7 @@ class PreviewActivity : ComponentActivity() {
                             GlassBubble(haze, painterResource(R.drawable.ic_folder_add), "Save to Dock", { saveToDock(uri, name, mime) }, size = 48.dp)
                             Spacer(Modifier.width(10.dp))
                         },
-                    ) { padding ->
-                        if (isPdf) ZoomablePdf(uri, Modifier.fillMaxSize()) else PreviewContent(state, padding)
-                    }
+                    ) { padding -> PreviewContent(state, padding) }
                 }
             }
         }

@@ -37,6 +37,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.painter.Painter
@@ -75,10 +77,12 @@ object GlassColors {
  * a near-opaque tint so text stays legible.
  */
 @Composable
-fun Modifier.glass(state: HazeState, shape: Shape, elevation: Dp = 14.dp): Modifier {
+fun Modifier.glass(state: HazeState, shape: Shape, elevation: Dp = 14.dp, tint: Color = Color.Unspecified): Modifier {
     val surface = MaterialTheme.colorScheme.surface
-    val tint = GlassColors.fill
+    val fill = GlassColors.fill
     val outline = MaterialTheme.colorScheme.outlineVariant
+    // An optional color washed over the glass, e.g. a primary action's hint of blue.
+    val extra = tint.takeIf { it.isSpecified }
     return this
         .shadow(elevation, shape, ambientColor = Color.Black.copy(alpha = 0.22f), spotColor = Color.Black.copy(alpha = 0.22f))
         .clip(shape)
@@ -86,10 +90,10 @@ fun Modifier.glass(state: HazeState, shape: Shape, elevation: Dp = 14.dp): Modif
             backgroundColor = surface
             blurRadius = 24.dp
             noiseFactor = 0f
-            tints = listOf(HazeTint(tint))
-            fallbackTint = HazeTint(surface.copy(alpha = 0.94f))
+            tints = listOfNotNull(HazeTint(fill), extra?.let(::HazeTint))
+            fallbackTint = HazeTint((extra?.compositeOver(surface) ?: surface).copy(alpha = 0.94f))
         }
-        .border(Dp.Hairline, outline, shape)
+        .border(Dp.Hairline, extra?.copy(alpha = 0.5f)?.compositeOver(outline) ?: outline, shape)
 }
 
 /**
@@ -116,7 +120,6 @@ fun StatusBarBlur(state: HazeState, modifier: Modifier = Modifier) {
 
 enum class MainTab(val label: String, @param:DrawableRes val icon: Int, @param:DrawableRes val activeIcon: Int) {
     Home("Home", R.drawable.ic_home_outline, R.drawable.ic_home),
-    Images("Images", R.drawable.ic_image_outline, R.drawable.ic_image),
     Files("Files", R.drawable.ic_doc_outline, R.drawable.ic_doc),
     Shelf("Shelf", R.drawable.ic_folder_outline, R.drawable.ic_folder),
 }
@@ -187,7 +190,10 @@ private fun IslandTab(tab: MainTab, selected: Boolean, onClick: () -> Unit) {
     }
 }
 
-/** Round frosted action button that sits beside the island (braim's pencil; here, the camera). */
+/**
+ * Round frosted action button that sits beside the island (braim's pencil; here, the camera).
+ * [tint] washes the glass with a color and draws the icon in it, for the one action that matters most.
+ */
 @Composable
 fun GlassBubble(
     state: HazeState,
@@ -196,6 +202,7 @@ fun GlassBubble(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     size: Dp = 60.dp,
+    tint: Color = Color.Unspecified,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -207,11 +214,16 @@ fun GlassBubble(
                 scaleY = scale
             }
             .size(size)
-            .glass(state, CircleShape)
+            .glass(state, CircleShape, tint = if (tint.isSpecified) tint.copy(alpha = 0.16f) else Color.Unspecified)
             .clickable(interaction, indication = null, role = Role.Button, onClickLabel = contentDescription, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(painter, contentDescription = contentDescription, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(26.dp))
+        Icon(
+            painter,
+            contentDescription = contentDescription,
+            tint = if (tint.isSpecified) tint else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.size(if (size < 56.dp) 24.dp else 26.dp),
+        )
     }
 }
 

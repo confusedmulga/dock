@@ -61,11 +61,11 @@ Two-stage rendering: the expensive OpenCV base (crop, perspective, filter, rotat
 re-runs when those change; brightness/contrast and ink are composited on top cheaply and
 previewed live with the same math.
 
-- [x] Toolbar in order: Retake · Crop · Edit text · Filters · Bright · Eraser · Markup · Adjust
+- [x] Toolbar in order: Retake · Crop · Rotate · Filters · Bright · Eraser · Markup · Adjust, all on screen at once
 - [x] Page strip above the tools: tap any page to switch to it without leaving the editor
 - [x] Retake: camera replaces the page's photo, keeping its filter and brightness
 - [x] Crop (with rotate)
-- [x] Edit text: placeholder until OCR (Phase 5)
+- [x] Rotate: one tap, from the toolbar (it took the place of the "Edit text" placeholder, which comes back when text can be edited)
 - [x] Filters with "Apply to all pages"
 - [x] Bright: brightness + contrast sliders, live preview, "Apply to all pages"
 - [x] Eraser: paint with a color (white by default), eyedropper picks colors from the page, undo
@@ -110,6 +110,17 @@ operations that must keep text and vectors, Android's PdfRenderer for page rende
 - [x] The island's tabs swipe sideways (pager with braim's spring)
 - [x] Document preview for Word, Excel, PowerPoint, OpenDocument, RTF, CSV and text files (`core:office`),
       in Files / Shelf / Recent, the "View documents" tool, and "Open with Dock" from other apps
+- [x] Design pass for a quieter look: one accent color (the theme's primary) instead of a color per tool, no gradients
+      outside the color picker, Home's tools as one list under the Scan card, a flat card instead of the dashed upload area on Images
+- [x] Files: sort by newest, oldest, name or size (remembered), in a menu with "Make all PDFs searchable"
+- [x] Viewer: a page counter ("3 / 12") while the pages scroll
+- [x] Save sheet: "New folder" creates a folder and saves into it; the keyboard's Done saves
+- [x] Tapping the tab you're already on scrolls its list to the top
+- [x] Camera: when Android no longer shows its permission dialog, the button opens Settings instead
+- [x] The **Images** tab became Home's "Resize images" tool; the island has three tabs
+- [x] Viewer: sidebar of page thumbnails (hide it from ⋮); long-press one to rearrange pages, saved with the frosted tick
+- [x] Viewer: select text (long press, drag, handles), copy, select all, share; search with every match highlighted
+- [x] Drop-down menus rounded to match the rest of the app
 - [ ] **Your test on a real phone** ← next step (manual focus especially: the emulator's lens isn't real)
 - [ ] Legacy .doc files show their text without formatting
 - [ ] Editing a text-based PDF turns its pages into images (text stops being selectable) — keep text layers when only pages are reordered/deleted
@@ -147,7 +158,7 @@ operations that must keep text and vectors, Android's PdfRenderer for page rende
 - [x] New scans get it after saving (setting in the scan settings); a switch per PDF in its menu;
       **Run OCR** for PDFs from elsewhere (pages that already have text are skipped)
 - [x] **Make all searchable** (Files), one PDF at a time, with progress and Stop; files keep the date they showed
-- [ ] Copy text from a page in Dock's viewer
+- [x] Select and copy text in Dock's viewer, and search it; pages without a text layer are read on the fly (nothing is written to the file)
 - [ ] Search across documents
 - [ ] More scripts (Cyrillic, Devanagari, Arabic, CJK) as optional recognizers
 - [ ] Sideways / upside-down pages (PaddleOCR's orientation classifier)

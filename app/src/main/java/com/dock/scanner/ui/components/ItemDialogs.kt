@@ -4,10 +4,13 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -30,6 +33,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.dock.scanner.R
 import com.dock.scanner.data.storage.LibraryItem
@@ -50,11 +54,19 @@ class ItemDialogState {
 @Composable
 fun rememberItemDialogState() = remember { ItemDialogState() }
 
+/** What to call [item] in a dialog: "folder", "PDF", "image" or "file". */
+private fun kindOf(item: LibraryItem) = when {
+    item.isFolder -> "folder"
+    item.isPdf -> "PDF"
+    item.isImage -> "image"
+    else -> "file"
+}
+
 @Composable
 fun ItemDialogs(state: ItemDialogState, vm: LibraryViewModel, destinations: List<Destination>) {
     state.renaming?.let { item ->
         NameDialog(
-            title = if (item.isFolder) "Rename folder" else "Rename PDF",
+            title = "Rename ${kindOf(item)}",
             initial = item.displayName,
             confirm = "Rename",
             onConfirm = { vm.rename(item, it); state.renaming = null },
@@ -83,9 +95,10 @@ fun ItemDialogs(state: ItemDialogState, vm: LibraryViewModel, destinations: List
         val targets = destinations.filter { it.documentId != item.parentId && it.documentId != item.documentId }
         AlertDialog(
             onDismissRequest = { state.moving = null },
-            title = { Text("Move “${item.displayName}”") },
+            title = { Text("Move “${item.displayName}”", maxLines = 2, overflow = TextOverflow.Ellipsis) },
             text = {
-                Column {
+                // Scrolls: a shelf with many folders is taller than the dialog.
+                Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
                     Row(
                         Modifier
                             .fillMaxWidth()
@@ -118,6 +131,8 @@ fun ItemDialogs(state: ItemDialogState, vm: LibraryViewModel, destinations: List
                             Text(
                                 if (target == destinations.firstOrNull()) "${target.name} (main)" else target.name,
                                 style = MaterialTheme.typography.bodyLarge,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.padding(start = 14.dp),
                             )
                         }
@@ -130,7 +145,7 @@ fun ItemDialogs(state: ItemDialogState, vm: LibraryViewModel, destinations: List
     state.deleting?.let { item ->
         AlertDialog(
             onDismissRequest = { state.deleting = null },
-            title = { Text(if (item.isFolder) "Delete folder?" else "Delete PDF?") },
+            title = { Text("Delete ${kindOf(item)}?") },
             text = {
                 Text(
                     if (item.isFolder) {
@@ -154,7 +169,8 @@ fun ItemDialogs(state: ItemDialogState, vm: LibraryViewModel, destinations: List
 @Composable
 fun NameDialog(title: String, initial: String, confirm: String, onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
     var value by remember { mutableStateOf(TextFieldValue(initial, TextRange(0, initial.length))) }
-    val valid = value.text.isNotBlank() && value.text.none { it in INVALID_CHARS }
+    val valid = isValidFileName(value.text)
+    val problem = fileNameProblem(value.text)
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
     AlertDialog(
@@ -165,10 +181,8 @@ fun NameDialog(title: String, initial: String, confirm: String, onConfirm: (Stri
                 value = value,
                 onValueChange = { value = it },
                 singleLine = true,
-                isError = !valid && value.text.isNotEmpty(),
-                supportingText = if (!valid && value.text.isNotEmpty()) {
-                    { Text("Names can't contain / \\ : * ? \" < > |") }
-                } else null,
+                isError = problem != null,
+                supportingText = problem?.let { { Text(it) } },
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { if (valid) onConfirm(value.text.trim()) }),
                 modifier = Modifier.fillMaxWidth().focusRequester(focus),
@@ -180,3 +194,16 @@ fun NameDialog(title: String, initial: String, confirm: String, onConfirm: (Stri
 }
 
 private const val INVALID_CHARS = "/\\:*?\"<>|"
+
+/**
+ * What's wrong with [name] as a file or folder name, to show under the field; null when it's
+ * fine or still empty (an empty field just keeps the button off).
+ */
+fun fileNameProblem(name: String): String? = when {
+    name.any { it in INVALID_CHARS } -> "Names can't contain / \\ : * ? \" < > |"
+    // Dock, like file managers, hides names that start with a dot: the file would vanish from the lists.
+    name.trimStart().startsWith(".") -> "Names can't start with a dot"
+    else -> null
+}
+
+fun isValidFileName(name: String): Boolean = name.isNotBlank() && fileNameProblem(name) == null

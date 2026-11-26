@@ -29,8 +29,6 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -46,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -60,7 +59,6 @@ import com.dock.scanner.data.storage.PdfPreviews
 import com.dock.scanner.office.OfficeFormat
 import com.dock.scanner.ui.tools.PdfTool
 import coil3.compose.AsyncImage
-import androidx.compose.material3.HorizontalDivider
 import java.util.Calendar
 import kotlin.math.roundToInt
 
@@ -190,47 +188,47 @@ fun PdfRow(item: LibraryItem, actions: PdfActions, showFolder: Boolean, modifier
                 Icon(Icons.Filled.MoreVert, contentDescription = "More actions for ${item.displayName}")
             }
             // Anchored to the button that opened it.
-            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            DockDropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 if (item.isPdf) {
-                    DropdownMenuItem(
+                    DockMenuItem(
                         text = { Text("Edit") },
                         leadingIcon = { Icon(painterResource(R.drawable.ic_edit_doc), null) },
                         onClick = { menu = false; actions.onEdit(item) },
                     )
-                    DropdownMenuItem(
+                    DockMenuItem(
                         text = { Text("Compress") },
                         leadingIcon = { Icon(painterResource(R.drawable.ic_compress), null) },
                         onClick = { menu = false; actions.onTool(PdfTool.Compress, item) },
                     )
-                    DropdownMenuItem(
+                    DockMenuItem(
                         text = { Text("Convert to images") },
                         leadingIcon = { Icon(painterResource(R.drawable.ic_image), null) },
                         onClick = { menu = false; actions.onTool(PdfTool.ToImages, item) },
                     )
-                    DropdownMenuItem(
+                    DockMenuItem(
                         text = { Text("Split") },
                         leadingIcon = { Icon(painterResource(R.drawable.ic_split), null) },
                         onClick = { menu = false; actions.onTool(PdfTool.Split, item) },
                     )
                     OcrMenuItem(item, onDismiss = { menu = false })
-                    HorizontalDivider()
+                    DockMenuDivider()
                 }
-                DropdownMenuItem(
+                DockMenuItem(
                     text = { Text("Share") },
                     leadingIcon = { Icon(Icons.Filled.Share, null) },
                     onClick = { menu = false; actions.onShare(item) },
                 )
-                DropdownMenuItem(
+                DockMenuItem(
                     text = { Text("Rename") },
                     leadingIcon = { Icon(Icons.Filled.Edit, null) },
                     onClick = { menu = false; actions.onRename(item) },
                 )
-                DropdownMenuItem(
+                DockMenuItem(
                     text = { Text("Move to…") },
                     leadingIcon = { Icon(painterResource(R.drawable.ic_folder_outline), null) },
                     onClick = { menu = false; actions.onMove(item) },
                 )
-                DropdownMenuItem(
+                DockMenuItem(
                     text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
                     leadingIcon = { Icon(Icons.Filled.Delete, null, tint = MaterialTheme.colorScheme.error) },
                     onClick = { menu = false; actions.onDelete(item) },
@@ -308,13 +306,23 @@ fun documentLook(format: OfficeFormat): Pair<Color, Int> {
     }
 }
 
+/** What to show where a list would be: an optional quiet [icon], a title and a line of help. */
 @Composable
-fun EmptyMessage(title: String, body: String, modifier: Modifier = Modifier) {
+fun EmptyMessage(title: String, body: String, modifier: Modifier = Modifier, icon: Painter? = null) {
     Column(
-        modifier.fillMaxWidth().padding(horizontal = 40.dp, vertical = 64.dp),
+        modifier.fillMaxWidth().padding(horizontal = 40.dp, vertical = 56.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(title, style = MaterialTheme.typography.titleLarge)
+        if (icon != null) {
+            Box(
+                Modifier.size(56.dp).clip(MaterialTheme.shapes.large).background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(28.dp))
+            }
+            Spacer(Modifier.height(16.dp))
+        }
+        Text(title, style = MaterialTheme.typography.titleLarge, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         Spacer(Modifier.height(6.dp))
         Text(
             body,

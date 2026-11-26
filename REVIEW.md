@@ -1,5 +1,53 @@
 # Dock: bug review
 
+## Fifth pass (2026-11-15): design pass on `12e6e74`, and the bugs found on the way
+
+Scope: a design pass for a quieter look (one accent color, no gradients), with the app's own code read whole first: every screen and view model under `app/`, and `DockLibrary`. The `core` modules weren't re-read. Each screen was looked at on the emulator before and after (Android 16, a debug build installed beside the release one).
+
+**Result:** 4 Medium and 13 Low findings, all fixed in the working tree (not committed). One solo pass with no independent blind pass: read this as "no confirmed Medium+ findings left in 1 pass", not as bug-free.
+
+| ID | Sev | Status | Where | Finding | Fix |
+|---|---|---|---|---|---|
+| V1 | Medium | Confirmed on emulator (the Shelf case; the search case traced), fixed | `ui/main/MainShell.kt`, `ui/files/FilesScreen.kt`, `ui/shelf/ShelfScreen.kt` | The pager keeps the tabs next to the open one composed, and their back handlers stayed on. With a folder open on the Shelf, back on Files closed that folder (unseen) instead of going Home; a search left open in Files swallowed the first back on other tabs the same way. | Files and Shelf only handle back while they're the tab in front. Files also lets go of the keyboard when swiped away. |
+| V2 | Medium | Confirmed on emulator, fixed | `ui/camera/CameraScreen.kt` | After "Don't allow" twice, Android stops showing its permission dialog, so "Allow camera" did nothing: no way to the scanner without knowing to look in Settings. | The button becomes "Open Settings", and the camera opens by itself on coming back with the permission granted. |
+| V3 | Medium | Confirmed (trace, unit test), fixed | `data/Page.kt` (`SheetLayout.clamp`) | A page cropped to a thin strip (about 14:1 on a landscape sheet, 28:1 on portrait) on a paper sheet asked for a size range with its ends swapped: `IllegalArgumentException` on the main thread at the next render or drag. | A strip gets the widest size that fits, below the usual minimum. The position ranges can't be empty either. |
+| V4 | Medium | Plausible (traced), fixed | `ui/review/ReviewScreen.kt` | While a PDF was being saved, pages could still be opened, added, reordered or discarded (was L13): discarding deleted the files the writer was reading. | Back, Cancel, Reorder, the pages and the add buttons are off until the save ends. Not exercised: saves finish too fast on the emulator. |
+| V5 | Low | Confirmed on emulator, fixed | `ui/camera/CameraScreen.kt` | In light theme the status bar's dark icons vanished into the camera's black background. | Light icons while the camera is up, the theme's again after. |
+| V6 | Low | Confirmed (unit test, emulator), fixed | `ui/components/ItemDialogs.kt`, save sheet, Merge | Names starting with "." were accepted, and the file then vanished from Dock, which hides them (was L8). | Turned down with a message, by one check shared by every name field. |
+| V7 | Low | Confirmed (unit test), fixed | `data/storage/DockLibrary.kt` | "Report.PDF" was saved as "Report.PDF.pdf" (was L7). | The typed extension is dropped in any case. |
+| V8 | Low | Confirmed on emulator, fixed | `ui/editor/PageEditorScreen.kt` | The trash button deleted the page at once, with its edits and no undo, next to nothing else to mis-tap. | Asks first. |
+| V9 | Low | Plausible (traced), fixed | `ui/onboarding/StorageSetupScreen.kt`, camera permission screen | Neither drew a background, so the screen underneath showed through while they slid in or followed the back gesture. | Both paint the theme's surface. |
+| V10 | Low | Plausible (traced), fixed | `ui/components/ItemDialogs.kt` | The Move dialog's folder list didn't scroll: past about nine folders the rest couldn't be reached. | Scrolls, up to 360 dp tall. Seen with 7 folders; not with more. |
+| V11 | Low | Confirmed on emulator, fixed | `ui/components/ItemDialogs.kt`, `ui/shelf/ShelfScreen.kt` | "Rename PDF" and "Delete PDF?" for documents and images too; an empty folder said to move PDFs "from Home", where the list no longer is. | Named by kind; points to the Files tab. Seen for PDFs and folders. |
+| V12 | Low | Plausible (traced), fixed | `data/tools/PdfSources.kt`, `ui/viewer/PdfViewerScreen.kt` | A PDF that couldn't be opened (damaged, not a PDF) leaked its file descriptor (was L2, and the leak half of L3). The viewer said a locked PDF "may have been moved or deleted". | Closed on any failure. The viewer says the PDF needs a password. Not exercised: no locked PDF on the emulator. |
+| V13 | Low | Plausible (traced), fixed | `ui/ScanViewModel.kt`, `ui/DockNavHost.kt` | "Apply to all pages" and the folder a scan was headed for carried over into the next session (was L9, L10). | Both reset with the session. |
+| V14 | Low | Plausible (traced), fixed | `ui/shelf/ShelfScreen.kt` | Opening a folder kept the list where the folder before it was scrolled to. | A folder starts at its top. |
+| V15 | Low | Plausible (traced), fixed | `ui/images/ImagesViewModel.kt` | Picking pictures twice in a row ended "Reading images…" when the first batch was in. | Counted, like the PDF tools do. |
+| V16 | Low | Plausible (traced), fixed | `ui/LibraryViewModel.kt` | The Shelf asked the storage provider for the folder's name during composition, on the main thread (was L14). | Read in the background; folders on the phone's own storage need no query. |
+| V17 | Low | Confirmed on emulator, fixed | `ui/camera/CameraScreen.kt`, `ui/tools/ToolScreen.kt`, `ui/about/AboutScreen.kt`, `ui/review/ReviewScreen.kt` | From the fourth pass's backlog: "Review 1 pages"; rows running into the status bar's icons on the tool lists (and About). Also: the save sheet's folder row could have the chosen folder out of view. | Singular label; the same status-bar blur as the tabs; the row scrolls to the choice. |
+
+L16 (a pinch could go below the size slider's minimum) is closed too: one minimum, `SheetLayout.MIN_WIDTH`.
+
+**Changed on purpose (design and features, not bugs):**
+- One accent color. The nine per-tool colors are gone (`ToolAccent`): they didn't follow the wallpaper colors, and Compress's red button read as "delete". Tool icons sit on neutral tiles; every primary button is the theme's primary.
+- Home: the Scan card, then the seven tools as one list (they fit a screen with Recent in view, and no description is cut off). Images: a flat card instead of the dashed upload area.
+- No gradients left outside the color picker's own square and hue strip: the rainbow ring for a custom pen color is a "+" swatch.
+- Editor: Rotate is a toolbar tool and took the place of the "Edit text" placeholder; all eight tools are on screen at once.
+- Files: sort by newest, oldest, name or size (remembered), in a menu that also holds "Make all PDFs searchable".
+- Viewer: page counter. Save sheet: "New folder", and the keyboard's Done saves. Tapping the tab you're on scrolls it to the top. Empty states have an icon.
+
+**New tests:** `app/.../FileNamesTest.kt` (4: V6, V7) and 3 more in `SheetLayoutTest.kt` (V3: the thin strip is the case the old range check threw on). The rest are UI and storage behavior with no automated test.
+
+**Checked on the emulator after the changes, all working (debug build):** scan (3 pages), rotate, markup panel, delete a page, save by the keyboard's Done into the main folder and into a folder created from the sheet, the folder row scrolling to a Shelf folder the scan started from, Compress on the result (207 kB to 30 kB), rename, move and delete dialogs, deleting a folder with its content, sorting (kept across a restart), search, the page counter on a 3-page PDF, back from every tab, the permission screen through to Settings and back, About, Shelf, Images, dark theme on Home.
+
+**On the minified, signed release build** (installed under a side-by-side app ID, as the fourth pass's U1 only showed there): first-run setup, Home, sorting, search, the page counter, scan (2 pages), the editor's eight tools and Rotate, save by the keyboard's Done, the searchable-text entry in a file's menu, Compress (208 kB to 70 kB), delete. All working.
+
+**Not covered:** a real phone; on the release build, anything beyond the list above; merge, split, PDF to images, the Images resizer, Edit PDF, OCR and the document preview weren't run again, though their code changed only in button colors and the status-bar blur; screens narrower than 360 dp, and large font sizes, for the editor's eight-tool row.
+
+**Oracles after the fixes:** `./gradlew check` green. Lint 0 errors in all five modules. 59 unit tests passing, in debug and in release (app 23, `core:office` 24, `core:scanner` 11, `core:pdf` 1). The release build minifies and runs. The 22 on-device tests weren't run.
+
+---
+
 ## Fourth pass (2026-11-10): `56f6dd8` and later, on the release build
 
 Scope: everything added since the third pass (OCR, the corner model, the minimal ONNX Runtime, the About screen), read whole, plus every main flow driven by hand on a **minified, signed release build**. No earlier pass ran the app minified.

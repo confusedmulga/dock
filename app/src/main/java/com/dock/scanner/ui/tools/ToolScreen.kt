@@ -55,7 +55,6 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
@@ -76,6 +75,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -102,24 +102,26 @@ import com.dock.scanner.ui.components.EmptyMessage
 import com.dock.scanner.ui.components.LargeTitle
 import com.dock.scanner.ui.components.PdfThumbnail
 import com.dock.scanner.ui.components.SectionHeader
+import com.dock.scanner.ui.components.StatusBarBlur
+import com.dock.scanner.ui.components.fileNameProblem
 import com.dock.scanner.ui.components.friendlyDate
+import com.dock.scanner.ui.components.isValidFileName
 import com.dock.scanner.ui.components.rememberPdfPreview
 import com.dock.scanner.ui.components.shareDocument
-import com.dock.scanner.ui.theme.Accent
-import com.dock.scanner.ui.theme.ToolAccent
-import com.dock.scanner.ui.theme.toolAccent
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeSource
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 /** @param prompt what to do on the list of PDFs. */
-private data class ToolInfo(val title: String, val description: String, val prompt: String, val action: String, val accent: ToolAccent)
+private data class ToolInfo(val title: String, val description: String, val prompt: String, val action: String)
 
 private fun PdfTool.info() = when (this) {
-    PdfTool.Edit -> ToolInfo("Edit PDF", "Crop, filter, mark up or rearrange a PDF's pages.", "Choose the PDF to edit.", "Edit", ToolAccent.Edit)
-    PdfTool.Compress -> ToolInfo("Compress PDF", "Shrinks the pictures inside a PDF. Text stays sharp and selectable.", "Choose the PDF to compress.", "Compress", ToolAccent.Compress)
-    PdfTool.ToImages -> ToolInfo("PDF to images", "Every page becomes a picture. Each PDF gets its own folder.", "Choose the PDFs to turn into images.", "Convert", ToolAccent.ToImages)
-    PdfTool.Merge -> ToolInfo("Merge PDFs", "Combine PDFs into one, in the order shown.", "Choose the PDFs to merge, in order.", "Merge", ToolAccent.Merge)
-    PdfTool.Split -> ToolInfo("Split PDF", "Save pages or page ranges as separate PDFs.", "Choose the PDF to split.", "Split", ToolAccent.Split)
+    PdfTool.Edit -> ToolInfo("Edit PDF", "Crop, filter, mark up or rearrange a PDF's pages.", "Choose the PDF to edit.", "Edit")
+    PdfTool.Compress -> ToolInfo("Compress PDF", "Shrinks the pictures inside a PDF. Text stays sharp and selectable.", "Choose the PDF to compress.", "Compress")
+    PdfTool.ToImages -> ToolInfo("PDF to images", "Every page becomes a picture. Each PDF gets its own folder.", "Choose the PDFs to turn into images.", "Convert")
+    PdfTool.Merge -> ToolInfo("Merge PDFs", "Combine PDFs into one, in the order shown.", "Choose the PDFs to merge, in order.", "Merge")
+    PdfTool.Split -> ToolInfo("Split PDF", "Save pages or page ranges as separate PDFs.", "Choose the PDF to split.", "Split")
 }
 
 private enum class CompressMode { Preset, Custom, TargetSize }
@@ -154,7 +156,6 @@ fun ToolScreen(
     val choosing by vm.choosing.collectAsStateWithLifecycle()
     val backToOptions by vm.backToOptions.collectAsStateWithLifecycle()
     val info = tool.info()
-    val accent = toolAccent(info.accent)
     val working = state is ToolState.Working
 
     // "Add files": PDFs from anywhere else on the phone, through the system picker.
@@ -198,7 +199,7 @@ fun ToolScreen(
     val ready = !working && !loading && when (tool) {
         PdfTool.Edit -> false
         PdfTool.Compress -> inputs.size == 1 && (compressMode != CompressMode.TargetSize || targetOk)
-        PdfTool.Merge -> inputs.size >= 2 && mergeName.isNotBlank() && mergeName.none { it in "/\\:*?\"<>|" }
+        PdfTool.Merge -> inputs.size >= 2 && isValidFileName(mergeName)
         PdfTool.Split -> inputs.size == 1 && (everyPage || parsedRanges != null)
         PdfTool.ToImages -> inputs.isNotEmpty()
     }
@@ -221,7 +222,6 @@ fun ToolScreen(
             ChooseStep(
                 tool = tool,
                 info = info,
-                accent = accent,
                 pdfs = pdfs,
                 inputs = inputs,
                 loading = loading,
@@ -243,8 +243,13 @@ fun ToolScreen(
                 listState.animateScrollToItem(listState.layoutInfo.totalItemsCount - 1)
             }
         }
+        val haze = remember { HazeState() }
         Box(Modifier.fillMaxSize()) {
-            LazyColumn(state = listState, contentPadding = PaddingValues(top = top, bottom = 140.dp), modifier = Modifier.fillMaxSize()) {
+            LazyColumn(
+                state = listState,
+                contentPadding = PaddingValues(top = top, bottom = 140.dp),
+                modifier = Modifier.fillMaxSize().hazeSource(haze),
+            ) {
                 item(key = "header") { Header(info.title, info.description, back) }
                 item(key = "inputs-title") { SectionHeader(if (tool.multiple) "PDFs" else "PDF") }
                 itemsIndexed(inputs, key = { i, it -> "${it.uri}#$i" }) { i, input ->
@@ -302,6 +307,8 @@ fun ToolScreen(
                                     onValueChange = { mergeName = it },
                                     singleLine = true,
                                     suffix = { Text(".pdf") },
+                                    isError = fileNameProblem(mergeName) != null,
+                                    supportingText = fileNameProblem(mergeName)?.let { { Text(it) } },
                                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                                     modifier = Modifier.fillMaxWidth(),
                                 )
@@ -337,6 +344,9 @@ fun ToolScreen(
                 }
             }
 
+            // Rows scrolling up fade out under the system icons instead of running into them.
+            StatusBarBlur(haze, Modifier.align(Alignment.TopCenter))
+
             // The primary button, or progress while a tool runs.
             ActionBar(Modifier.align(Alignment.BottomCenter)) {
                 val s = state
@@ -348,9 +358,8 @@ fun ToolScreen(
                     else LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     Spacer(Modifier.height(8.dp))
                 } else {
-                    AccentButton(
+                    PrimaryButton(
                         text = info.action,
-                        accent = accent,
                         enabled = ready,
                         onClick = {
                             when (tool) {
@@ -394,14 +403,12 @@ private fun ActionBar(modifier: Modifier = Modifier, content: @Composable Column
     }
 }
 
+/** The step's one filled button. Every tool uses the theme's primary color: one accent, app-wide. */
 @Composable
-private fun AccentButton(text: String, accent: Accent, enabled: Boolean, onClick: () -> Unit) {
-    Button(
-        onClick = onClick,
-        enabled = enabled,
-        colors = ButtonDefaults.buttonColors(containerColor = accent.onContainer, contentColor = accent.container),
-        modifier = Modifier.fillMaxWidth().height(52.dp),
-    ) { Text(text, style = MaterialTheme.typography.labelLarge) }
+private fun PrimaryButton(text: String, enabled: Boolean, onClick: () -> Unit) {
+    Button(onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+        Text(text, style = MaterialTheme.typography.labelLarge)
+    }
 }
 
 /**
@@ -412,7 +419,6 @@ private fun AccentButton(text: String, accent: Accent, enabled: Boolean, onClick
 private fun ChooseStep(
     tool: PdfTool,
     info: ToolInfo,
-    accent: Accent,
     pdfs: List<LibraryItem>?,
     inputs: List<SourcePdf>,
     loading: Boolean,
@@ -426,11 +432,12 @@ private fun ChooseStep(
     val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     // Chosen through "Add files", so they aren't in the library list.
     val added = inputs.withIndex().filter { (_, input) -> pdfs.orEmpty().none { it.uri == input.uri } }
+    val haze = remember { HazeState() }
 
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
             contentPadding = PaddingValues(top = top, bottom = if (tool.multiple) 140.dp else bottom + 24.dp),
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().hazeSource(haze),
         ) {
             item(key = "header") { Header(info.title, info.prompt, onBack) }
             item(key = "add") {
@@ -469,17 +476,18 @@ private fun ChooseStep(
             }
         }
 
+        StatusBarBlur(haze, Modifier.align(Alignment.TopCenter))
+
         if (tool.multiple) {
             ActionBar(Modifier.align(Alignment.BottomCenter)) {
                 val count = inputs.size
-                AccentButton(
+                PrimaryButton(
                     text = when {
                         count == 0 && tool.minInputs > 1 -> "Choose at least ${tool.minInputs} PDFs"
                         count == 0 -> "Choose PDFs"
                         count < tool.minInputs -> "Choose ${tool.minInputs - count} more"
                         else -> "Continue with $count PDF${if (count == 1) "" else "s"}"
                     },
-                    accent = accent,
                     enabled = count >= tool.minInputs && !loading,
                     onClick = onContinue,
                 )

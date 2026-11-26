@@ -1,10 +1,14 @@
 package com.dock.scanner.ui.camera
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.provider.Settings
 import android.view.View
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -25,6 +29,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.drag
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -91,6 +96,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -101,8 +107,12 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.doOnLayout
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
@@ -128,30 +138,73 @@ import kotlin.math.roundToInt
 @Composable
 fun CameraScreen(vm: ScanViewModel, onDone: () -> Unit, onImported: () -> Unit, retakePageId: String? = null) {
     val context = LocalContext.current
-    var granted by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED,
-        )
+    val activity = LocalActivity.current
+    fun hasPermission() = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+    var granted by remember { mutableStateOf(hasPermission()) }
+    /** Android stops showing its dialog after the second "Don't allow": from then on only Settings can turn the camera on. */
+    var blocked by remember { mutableStateOf(false) }
+    val request = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        granted = ok
+        blocked = !ok && activity != null && !ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.CAMERA)
     }
-    val request = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted = it }
     LaunchedEffect(Unit) { if (!granted) request.launch(Manifest.permission.CAMERA) }
+    // Back from Settings, where the camera may just have been allowed.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { if (!granted) granted = hasPermission() }
 
     if (granted) {
         CameraContent(vm, onDone, onImported, retakePageId)
     } else {
         Column(
-            Modifier.fillMaxSize().systemBarsPadding().padding(32.dp),
+            Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).systemBarsPadding().padding(32.dp),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            Box(
+                Modifier.size(72.dp).clip(MaterialTheme.shapes.extraLarge).background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(painterResource(R.drawable.ic_camera), contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(34.dp))
+            }
+            Spacer(Modifier.height(20.dp))
+            Text("Camera access", style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(8.dp))
             Text(
-                "Dock needs the camera to scan documents. Photos never leave your device.",
+                if (blocked) "The camera is turned off for Dock. Turn it on under Permissions in Settings to scan documents."
+                else "Dock needs the camera to scan documents. Photos never leave your device.",
                 textAlign = TextAlign.Center,
                 style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.height(16.dp))
-            Button(onClick = { request.launch(Manifest.permission.CAMERA) }) { Text("Allow camera") }
+            Spacer(Modifier.height(24.dp))
+            if (blocked) {
+                Button(onClick = {
+                    val settings = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
+                    runCatching { context.startActivity(settings) }
+                }) { Text("Open Settings") }
+            } else {
+                Button(onClick = { request.launch(Manifest.permission.CAMERA) }) { Text("Allow camera") }
+            }
             TextButton(onClick = onDone) { Text("Not now") }
+        }
+    }
+}
+
+/**
+ * The camera screen is black in light theme too, where the status bar's icons would be dark
+ * and vanish into it: light icons while it's up, the theme's own again when it's left.
+ */
+@Composable
+private fun LightSystemBarIcons() {
+    val window = LocalActivity.current?.window ?: return
+    val view = LocalView.current
+    val darkTheme = isSystemInDarkTheme()
+    DisposableEffect(window, view, darkTheme) {
+        val bars = WindowCompat.getInsetsController(window, view)
+        bars.isAppearanceLightStatusBars = false
+        bars.isAppearanceLightNavigationBars = false
+        onDispose {
+            bars.isAppearanceLightStatusBars = !darkTheme
+            bars.isAppearanceLightNavigationBars = !darkTheme
         }
     }
 }
@@ -167,6 +220,7 @@ private fun CameraContent(vm: ScanViewModel, onDone: () -> Unit, onImported: () 
     val ocrNewScans by vm.ocrNewScans.collectAsStateWithLifecycle()
     val mode by vm.scanMode.collectAsStateWithLifecycle()
     var settingsOpen by remember { mutableStateOf(false) }
+    LightSystemBarIcons()
 
     var liveQuad by remember { mutableStateOf<Quad?>(null) }
     var torchOn by remember { mutableStateOf(false) }
@@ -454,7 +508,7 @@ private fun CameraContent(vm: ScanViewModel, onDone: () -> Unit, onImported: () 
                     BadgedBox(badge = { Badge { Text("${pages.size}") } }) {
                         AsyncImage(
                             model = last.output ?: last.source,
-                            contentDescription = "Review ${pages.size} pages",
+                            contentDescription = if (pages.size == 1) "Review 1 page" else "Review ${pages.size} pages",
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
                                 .size(52.dp)

@@ -52,9 +52,10 @@ object PdfSources {
         val fd = resolver.openFileDescriptor(uri, "r") ?: error("Can't open this PDF")
         val renderer = try {
             PdfRenderer(fd)
-        } catch (e: SecurityException) {
-            fd.close()
-            throw PasswordProtectedException()
+        } catch (e: Exception) {
+            // Not opened (damaged, not a PDF, or locked): the file is still ours to close.
+            runCatching { fd.close() }
+            throw if (e is SecurityException) PasswordProtectedException() else e
         }
         return renderer.use(block)
     }

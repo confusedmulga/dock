@@ -140,5 +140,3 @@ fun SheetEditor(
         }
     }
 }
-
-const val MIN_WIDTH = 0.08f

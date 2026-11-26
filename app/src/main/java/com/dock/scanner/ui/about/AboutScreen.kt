@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -43,6 +44,9 @@ import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import com.dock.scanner.ui.components.LargeTitle
 import com.dock.scanner.ui.components.SectionHeader
+import com.dock.scanner.ui.components.StatusBarBlur
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -60,47 +64,51 @@ fun AboutScreen(onBack: () -> Unit) {
     val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
-    LazyColumn(
-        contentPadding = PaddingValues(top = top, bottom = bottom + 24.dp),
-        modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface),
-    ) {
-        item(key = "header") {
-            Column {
-                IconButton(onClick = onBack, modifier = Modifier.padding(start = 4.dp, top = 4.dp)) {
-                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Back", modifier = Modifier.size(30.dp))
+    val haze = remember { HazeState() }
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
+        LazyColumn(
+            contentPadding = PaddingValues(top = top, bottom = bottom + 24.dp),
+            modifier = Modifier.fillMaxSize().hazeSource(haze),
+        ) {
+            item(key = "header") {
+                Column {
+                    IconButton(onClick = onBack, modifier = Modifier.padding(start = 4.dp, top = 4.dp)) {
+                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Back", modifier = Modifier.size(30.dp))
+                    }
+                    LargeTitle("About", subtitle = "Dock $version")
                 }
-                LargeTitle("About", subtitle = "Dock $version")
             }
-        }
-        item(key = "intro") {
-            Column(Modifier.padding(horizontal = 20.dp)) {
+            item(key = "intro") {
+                Column(Modifier.padding(horizontal = 20.dp)) {
+                    Text(
+                        "Dock is open source under the MIT License. It has no internet access: scanning, text " +
+                            "recognition and everything else run on your phone.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(Modifier.padding(top = 4.dp)) {
+                        TextButton(onClick = { openLink(context, SOURCE_URL) }) { Text("Source code") }
+                        TextButton(onClick = { openLink(context, PRIVACY_URL) }) { Text("Privacy policy") }
+                        TextButton(onClick = { reading = LicenseText("Dock: MIT License", "licenses/Dock-LICENSE.txt") }) { Text("License") }
+                    }
+                }
+            }
+            item(key = "oss-title") {
+                SectionHeader("Open-source software")
+            }
+            item(key = "oss-intro") {
                 Text(
-                    "Dock is open source under the MIT License. It has no internet access: scanning, text " +
-                        "recognition and everything else run on your phone.",
-                    style = MaterialTheme.typography.bodyMedium,
+                    "Dock is built on the work below. Each is used under its license; tap one to read it.",
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 8.dp),
                 )
-                Row(Modifier.padding(top = 4.dp)) {
-                    TextButton(onClick = { openLink(context, SOURCE_URL) }) { Text("Source code") }
-                    TextButton(onClick = { openLink(context, PRIVACY_URL) }) { Text("Privacy policy") }
-                    TextButton(onClick = { reading = LicenseText("Dock: MIT License", "licenses/Dock-LICENSE.txt") }) { Text("License") }
-                }
+            }
+            items(openSourceSoftware, key = { it.name }) { item ->
+                OpenSourceRow(item, onRead = { reading = it })
             }
         }
-        item(key = "oss-title") {
-            SectionHeader("Open-source software")
-        }
-        item(key = "oss-intro") {
-            Text(
-                "Dock is built on the work below. Each is used under its license; tap one to read it.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 8.dp),
-            )
-        }
-        items(openSourceSoftware, key = { it.name }) { item ->
-            OpenSourceRow(item, onRead = { reading = it })
-        }
+        StatusBarBlur(haze, Modifier.align(Alignment.TopCenter))
     }
 
     reading?.let { text -> LicenseSheet(text, onDismiss = { reading = null }) }

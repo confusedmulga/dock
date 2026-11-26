@@ -43,7 +43,7 @@ fun StorageSetupScreen(vm: LibraryViewModel, isChange: Boolean, onDone: () -> Un
     }
 
     Column(
-        Modifier.fillMaxSize().systemBarsPadding().padding(horizontal = 28.dp, vertical = 24.dp),
+        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).systemBarsPadding().padding(horizontal = 28.dp, vertical = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Spacer(Modifier.weight(1f))

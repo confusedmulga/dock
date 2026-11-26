@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.selection.selectable
@@ -41,9 +42,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -66,12 +64,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
@@ -83,10 +78,14 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import com.dock.scanner.ui.components.StatusBarBlur
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeSource
 import com.dock.scanner.R
 import com.dock.scanner.data.images.ImageResizer
 import com.dock.scanner.data.images.OutputFormat
@@ -98,22 +97,30 @@ import com.dock.scanner.ui.components.LargeTitle
 import com.dock.scanner.ui.components.SectionHeader
 import com.dock.scanner.ui.components.shareDocument
 import com.dock.scanner.ui.components.viewFile
-import com.dock.scanner.ui.theme.ToolAccent
-import com.dock.scanner.ui.theme.toolAccent
+import com.dock.scanner.ui.components.DockDropdownMenu
+import com.dock.scanner.ui.components.DockMenuItem
 
 /**
  * Resize, convert and compress pictures, with the same controls as reduceimages.com: new
  * size in percent, pixels, centimeters or inches with a lock for proportions, a resolution,
  * stretch/crop/fit when the shape changes, JPG/PNG/GIF, quality and background.
+ *
+ * One of Home's tools, on a screen of its own.
  */
 @Composable
-fun ImagesScreen(vm: ImagesViewModel, bottomInset: Dp, onShowFolder: (LibraryItem) -> Unit) {
+fun ImagesScreen(
+    vm: ImagesViewModel,
+    onBack: () -> Unit,
+    onShowFolder: (LibraryItem) -> Unit,
+    listState: LazyListState = rememberLazyListState(),
+) {
     val inputs by vm.inputs.collectAsStateWithLifecycle()
     val form by vm.form.collectAsStateWithLifecycle()
     val state by vm.state.collectAsStateWithLifecycle()
     val loading by vm.loading.collectAsStateWithLifecycle()
     val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-    val listState = rememberLazyListState()
+    val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 24.dp
+    val haze = remember { HazeState() }
 
     val pickPhotos = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(50)) { vm.add(it) }
     val browse = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { vm.add(it) }
@@ -123,9 +130,19 @@ fun ImagesScreen(vm: ImagesViewModel, bottomInset: Dp, onShowFolder: (LibraryIte
         if (state is ResizeState.Done || state is ResizeState.Failed) listState.animateScrollToItem(listState.layoutInfo.totalItemsCount - 1)
     }
 
-    LazyColumn(state = listState, contentPadding = PaddingValues(top = top + 8.dp, bottom = bottomInset), modifier = Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
+    LazyColumn(
+        state = listState,
+        contentPadding = PaddingValues(top = top, bottom = bottom),
+        modifier = Modifier.fillMaxSize().hazeSource(haze),
+    ) {
         item(key = "title") {
-            LargeTitle("Images", subtitle = "Resize, convert and compress pictures. All on your device.")
+            Column {
+                IconButton(onClick = onBack, modifier = Modifier.padding(start = 4.dp, top = 4.dp)) {
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Back", modifier = Modifier.size(30.dp))
+                }
+                LargeTitle("Resize images", subtitle = "Resize, convert and compress pictures. All on your device.")
+            }
         }
         item(key = "drop") {
             DropZone(
@@ -154,11 +171,9 @@ fun ImagesScreen(vm: ImagesViewModel, bottomInset: Dp, onShowFolder: (LibraryIte
                     Spacer(Modifier.height(10.dp))
                     LinearProgressIndicator(progress = { s.progress }, modifier = Modifier.fillMaxWidth())
                 } else {
-                    val accent = toolAccent(ToolAccent.Resize)
                     Button(
                         onClick = vm::resize,
                         enabled = inputs.isNotEmpty() && form.options() != null && !loading,
-                        colors = ButtonDefaults.buttonColors(containerColor = accent.onContainer, contentColor = accent.container),
                         modifier = Modifier.fillMaxWidth().height(52.dp),
                     ) { Text(if (inputs.size > 1) "Resize images" else "Resize image", style = MaterialTheme.typography.labelLarge) }
                 }
@@ -178,56 +193,38 @@ fun ImagesScreen(vm: ImagesViewModel, bottomInset: Dp, onShowFolder: (LibraryIte
             }
         }
     }
-}
-
-@Composable
-private fun DropZone(onSelect: () -> Unit, onBrowse: () -> Unit, loading: Boolean) {
-    val accent = toolAccent(ToolAccent.Resize)
-    val outline = MaterialTheme.colorScheme.outline
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
-            .clip(MaterialTheme.shapes.extraLarge)
-            .background(MaterialTheme.colorScheme.surfaceContainerLow)
-            .dashedBorder(outline)
-            .clickable(onClickLabel = "Select images", onClick = onSelect)
-            .padding(vertical = 28.dp, horizontal = 20.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Box(Modifier.size(56.dp).clip(CircleShape).background(accent.container), contentAlignment = Alignment.Center) {
-            Icon(painterResource(R.drawable.ic_upload), contentDescription = null, tint = accent.onContainer, modifier = Modifier.size(30.dp))
-        }
-        Spacer(Modifier.height(14.dp))
-        Text(if (loading) "Reading images…" else "Choose the images to resize", style = MaterialTheme.typography.titleMedium)
-        Text(
-            "JPG, PNG, BMP, GIF and more",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 2.dp),
-        )
-        Spacer(Modifier.height(14.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Button(
-                onClick = onSelect,
-                colors = ButtonDefaults.buttonColors(containerColor = accent.onContainer, contentColor = accent.container),
-            ) { Text("Select images") }
-            TextButton(onClick = onBrowse) { Text("Browse files") }
-        }
+    StatusBarBlur(haze, Modifier.align(Alignment.TopCenter))
     }
 }
 
-/** The dashed outline of an upload area. */
-private fun Modifier.dashedBorder(color: Color, radius: Dp = 28.dp) = drawWithContent {
-    drawContent()
-    val stroke = 1.5.dp.toPx()
-    drawRoundRect(
-        color = color,
-        topLeft = Offset(stroke / 2, stroke / 2),
-        size = Size(size.width - stroke, size.height - stroke),
-        cornerRadius = CornerRadius(radius.toPx()),
-        style = Stroke(width = stroke, pathEffect = PathEffect.dashPathEffect(floatArrayOf(10.dp.toPx(), 6.dp.toPx()))),
-    )
+/** Where pictures come in: the photo picker, or any file on the phone. */
+@Composable
+private fun DropZone(onSelect: () -> Unit, onBrowse: () -> Unit, loading: Boolean) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        shape = MaterialTheme.shapes.extraLarge,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+    ) {
+        Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(40.dp).clip(MaterialTheme.shapes.medium).background(MaterialTheme.colorScheme.surfaceContainerHighest),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(painterResource(R.drawable.ic_upload), contentDescription = null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(22.dp))
+                }
+                Column(Modifier.weight(1f).padding(start = 14.dp)) {
+                    Text(if (loading) "Reading images…" else "Choose the images to resize", style = MaterialTheme.typography.titleMedium)
+                    Text("JPG, PNG, BMP, GIF and more", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Button(onClick = onSelect) { Text("Select images") }
+                TextButton(onClick = onBrowse) { Text("Browse files") }
+            }
+        }
+    }
 }
 
 @Composable
@@ -380,9 +377,9 @@ private fun UnitPicker(unit: SizeUnit, onPick: (SizeUnit) -> Unit, modifier: Mod
             Text(unit.label, modifier = Modifier.weight(1f), maxLines = 1)
             Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
         }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+        DockDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             SizeUnit.entries.forEach { u ->
-                DropdownMenuItem(text = { Text(u.label) }, onClick = { open = false; onPick(u) })
+                DockMenuItem(text = { Text(u.label) }, onClick = { open = false; onPick(u) })
             }
         }
     }

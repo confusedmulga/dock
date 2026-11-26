@@ -80,12 +80,16 @@ class DockLibrary(context: Context) {
 
     fun rootId(root: Uri): String = DocumentsContract.getTreeDocumentId(root)
 
-    /** Human-readable location, e.g. "Documents/Dock". */
+    /** Human-readable location, e.g. "Documents/Dock". Asks the provider unless [localRootLabel] can tell. */
     fun rootLabel(root: Uri): String {
         val id = rootId(root)
-        return if (root.authority == EXTERNAL_STORAGE) id.substringAfter(':').ifEmpty { "Internal storage" }
-        else query(DocumentsContract.buildDocumentUriUsingTree(root, id), root, id).firstOrNull()?.name ?: id
+        return localRootLabel(root)
+            ?: query(DocumentsContract.buildDocumentUriUsingTree(root, id), root, id).firstOrNull()?.name ?: id
     }
+
+    /** The location when the URI alone tells it (a folder on the phone's own storage): no I/O, safe on the main thread. */
+    fun localRootLabel(root: Uri): String? =
+        if (root.authority == EXTERNAL_STORAGE) rootId(root).substringAfter(':').ifEmpty { "Internal storage" } else null
 
     fun list(root: Uri, parentId: String): List<LibraryItem> {
         val children = DocumentsContract.buildChildDocumentsUriUsingTree(root, parentId)
@@ -124,14 +128,14 @@ class DockLibrary(context: Context) {
 
     /** Creates an empty PDF; the provider adds " (1)" etc. if the name is taken. */
     fun createPdf(root: Uri, parentId: String, name: String): Uri? {
-        val fileName = name.trim().removeSuffix(".pdf") + ".pdf"
+        val fileName = name.trim().withoutExtension("pdf") + ".pdf"
         return DocumentsContract.createDocument(resolver, documentUri(root, parentId), MIME_PDF, fileName)
     }
 
     /** Renames, keeping the file's extension. */
     fun rename(item: LibraryItem, newName: String): Uri? {
         val ext = item.extension
-        val base = newName.trim().let { if (ext.isNotEmpty()) it.removeSuffix(".$ext") else it }
+        val base = newName.trim().let { if (ext.isNotEmpty()) it.withoutExtension(ext) else it }
         val name = if (ext.isEmpty()) base else "$base.$ext"
         return DocumentsContract.renameDocument(resolver, item.uri, name)
     }
@@ -256,3 +260,7 @@ class DockLibrary(context: Context) {
         }.getOrDefault(false)
     }
 }
+
+/** Drops a typed ".pdf" in any case ("Report.PDF"), so the name doesn't end up with the extension twice. */
+internal fun String.withoutExtension(ext: String): String =
+    if (length > ext.length + 1 && endsWith(".$ext", ignoreCase = true)) dropLast(ext.length + 1) else this

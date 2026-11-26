@@ -1,6 +1,5 @@
 package com.dock.scanner.ui.files
 
-import androidx.compose.foundation.shape.CircleShape
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
@@ -21,13 +20,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -47,13 +51,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.material3.AlertDialog
-import androidx.compose.ui.res.painterResource
 import com.dock.scanner.R
+import com.dock.scanner.data.FileSort
 import com.dock.scanner.ui.LibraryViewModel
 import com.dock.scanner.ui.components.ChromeButton
 import com.dock.scanner.ui.components.EmptyMessage
@@ -63,29 +69,58 @@ import com.dock.scanner.ui.components.PdfRow
 import com.dock.scanner.ui.components.SectionHeader
 import com.dock.scanner.ui.components.dateSection
 import com.dock.scanner.ui.theme.DockMotion
+import com.dock.scanner.ui.components.DockDropdownMenu
+import com.dock.scanner.ui.components.DockMenuItem
+import com.dock.scanner.ui.components.DockMenuDivider
 
-/** Every PDF and document in the library, newest first, with search across names and folders. */
+/**
+ * Every PDF and document in the library, with search across names and folders. Newest first
+ * and grouped by date unless another order is picked from the menu.
+ *
+ * @param active whether Files is the tab in front. The pager keeps it composed beside its
+ *   neighbours, where the back button and the keyboard aren't its to hold on to.
+ */
 @Composable
-fun FilesScreen(vm: LibraryViewModel, actions: PdfActions, bottomInset: Dp) {
+fun FilesScreen(
+    vm: LibraryViewModel,
+    actions: PdfActions,
+    bottomInset: Dp,
+    active: Boolean = true,
+    listState: LazyListState = rememberLazyListState(),
+) {
     val pdfs by vm.allFiles.collectAsStateWithLifecycle()
     val reading by vm.ocr.progress.collectAsStateWithLifecycle()
+    val sort by vm.fileSort.collectAsStateWithLifecycle()
     var confirmAll by remember { mutableStateOf(false) }
+    var menu by remember { mutableStateOf(false) }
     var searching by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
-    val listState = rememberLazyListState()
+    val focusManager = LocalFocusManager.current
 
-    BackHandler(enabled = searching) {
+    BackHandler(enabled = active && searching) {
         searching = false
         query = ""
     }
+    // Swiped away mid-search: the keyboard shouldn't follow to the next tab.
+    LaunchedEffect(active) { if (!active) focusManager.clearFocus() }
 
-    val results = remember(pdfs, query) {
+    val results = remember(pdfs, query, sort) {
         val q = query.trim()
-        if (q.isEmpty()) pdfs.orEmpty()
+        val matching = if (q.isEmpty()) pdfs.orEmpty()
         else pdfs.orEmpty().filter {
             it.displayName.contains(q, ignoreCase = true) || it.folderName?.contains(q, ignoreCase = true) == true
         }
+        // The library hands the files over newest first.
+        when (sort) {
+            FileSort.Newest -> matching
+            FileSort.Oldest -> matching.asReversed()
+            FileSort.Name -> matching.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.displayName })
+            FileSort.Largest -> matching.sortedByDescending { it.size }
+        }
     }
+    // Date orders are grouped by how long ago; the others are one run under a line saying how they're sorted.
+    val byDate = sort == FileSort.Newest || sort == FileSort.Oldest
+    val sections = remember(results, byDate) { if (byDate) results.groupBy { dateSection(it.date) } else emptyMap() }
     val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
 
     LazyColumn(
@@ -106,18 +141,26 @@ fun FilesScreen(vm: LibraryViewModel, actions: PdfActions, bottomInset: Dp) {
                 },
             ) {
                 if (!searching) {
-                    if (pdfs.orEmpty().any { it.isPdf }) {
-                        ChromeButton(
-                            painterResource(R.drawable.ic_ocr),
-                            contentDescription = "Make all PDFs searchable",
-                            onClick = { confirmAll = true },
-                        )
-                    }
                     ChromeButton(
                         rememberVectorPainter(Icons.Filled.Search),
                         contentDescription = "Search files",
                         onClick = { searching = true },
                     )
+                    Box {
+                        ChromeButton(
+                            rememberVectorPainter(Icons.Filled.MoreVert),
+                            contentDescription = "Sort and more",
+                            onClick = { menu = true },
+                        )
+                        FilesMenu(
+                            expanded = menu,
+                            sort = sort,
+                            hasPdfs = pdfs.orEmpty().any { it.isPdf },
+                            onDismiss = { menu = false },
+                            onSort = vm::setFileSort,
+                            onMakeAllSearchable = { confirmAll = true },
+                        )
+                    }
                 }
             }
         }
@@ -139,19 +182,27 @@ fun FilesScreen(vm: LibraryViewModel, actions: PdfActions, bottomInset: Dp) {
                 Box(Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             }
             pdfs!!.isEmpty() -> item(key = "empty") {
-                EmptyMessage("No files yet", "Scan a document or use a tool on Home. Every PDF you make is saved in your Dock folder and shows up here, along with any Word, Excel or PowerPoint files you put there.")
+                EmptyMessage(
+                    "No files yet",
+                    "Scan a document or use a tool on Home. Every PDF you make is saved in your Dock folder and shows up here, along with any Word, Excel or PowerPoint files you put there.",
+                    icon = painterResource(R.drawable.ic_doc_outline),
+                )
             }
             query.isNotBlank() -> {
                 if (results.isEmpty()) {
-                    item(key = "noresults") { EmptyMessage("No results", "Nothing matches “${query.trim()}”.") }
+                    item(key = "noresults") {
+                        EmptyMessage("No results", "Nothing matches “${query.trim()}”.", icon = rememberVectorPainter(Icons.Filled.Search))
+                    }
                 }
                 items(results, key = { it.documentId }) { PdfRow(it, actions, showFolder = true) }
             }
+            byDate -> sections.forEach { (section, items) ->
+                item(key = "section-$section") { SectionHeader(section) }
+                items(items, key = { it.documentId }) { PdfRow(it, actions, showFolder = true) }
+            }
             else -> {
-                results.groupBy { dateSection(it.date) }.forEach { (section, items) ->
-                    item(key = "section-$section") { SectionHeader(section) }
-                    items(items, key = { it.documentId }) { PdfRow(it, actions, showFolder = true) }
-                }
+                item(key = "section-sorted") { SectionHeader(if (sort == FileSort.Name) "A to Z" else sort.label) }
+                items(results, key = { it.documentId }) { PdfRow(it, actions, showFolder = true) }
             }
         }
     }
@@ -172,6 +223,45 @@ fun FilesScreen(vm: LibraryViewModel, actions: PdfActions, bottomInset: Dp) {
             },
             dismissButton = { TextButton(onClick = { confirmAll = false }) { Text("Cancel") } },
         )
+    }
+}
+
+/** The order of the list, with the current one ticked, and the things that apply to every file. */
+@Composable
+private fun FilesMenu(
+    expanded: Boolean,
+    sort: FileSort,
+    hasPdfs: Boolean,
+    onDismiss: () -> Unit,
+    onSort: (FileSort) -> Unit,
+    onMakeAllSearchable: () -> Unit,
+) {
+    DockDropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        Text(
+            "Sort by",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 4.dp),
+        )
+        FileSort.entries.forEach { option ->
+            DockMenuItem(
+                text = { Text(option.label) },
+                // Every row keeps the tick's space, so the labels stay in one column.
+                trailingIcon = {
+                    if (option == sort) Icon(Icons.Filled.Check, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary)
+                    else Spacer(Modifier.size(24.dp))
+                },
+                onClick = { onDismiss(); onSort(option) },
+            )
+        }
+        if (hasPdfs) {
+            DockMenuDivider()
+            DockMenuItem(
+                text = { Text("Make all PDFs searchable") },
+                leadingIcon = { Icon(painterResource(R.drawable.ic_ocr), null) },
+                onClick = { onDismiss(); onMakeAllSearchable() },
+            )
+        }
     }
 }
 
@@ -240,7 +330,3 @@ private fun SearchField(query: String, onQueryChange: (String) -> Unit, onCancel
         TextButton(onClick = onCancel) { Text("Cancel") }
     }
 }
-
-@Composable
-private fun rememberVectorPainter(image: androidx.compose.ui.graphics.vector.ImageVector) =
-    androidx.compose.ui.graphics.vector.rememberVectorPainter(image)

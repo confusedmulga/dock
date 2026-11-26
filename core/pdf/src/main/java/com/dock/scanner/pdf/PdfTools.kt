@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Rect
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
+import com.tom_roush.pdfbox.cos.COSArray
 import com.tom_roush.pdfbox.cos.COSBase
 import com.tom_roush.pdfbox.cos.COSName
 import com.tom_roush.pdfbox.io.MemoryUsageSetting
@@ -47,6 +48,9 @@ object PdfTools {
     private val memory get() = MemoryUsageSetting.setupMixed(32L * 1024 * 1024)
 
     private fun open(file: File): PDDocument = open { PDDocument.load(file, memory) }
+
+    /** Opens [file] for a reader that keeps it open, e.g. [PdfTextReader]. */
+    internal fun openDocument(file: File): PDDocument = open(file)
 
     private fun open(load: () -> PDDocument): PDDocument {
         val doc = try {
@@ -101,6 +105,39 @@ object PdfTools {
             destinationFileName = output.absolutePath
             inputs.forEach { addSource(it) }
             mergeDocuments(memory)
+        }
+    }
+
+    /**
+     * Writes [input] to [output] with its pages in [order]: the 0-based indexes of the current
+     * pages, each exactly once. The pages themselves are moved, not copied, so their text,
+     * links and bookmarks all still work.
+     */
+    fun reorder(input: File, output: File, order: List<Int>) {
+        open(input).use { doc ->
+            val pages = doc.pages.toList()
+            require(order.size == pages.size && order.sorted() == pages.indices.toList()) {
+                "The new order must have every page exactly once"
+            }
+            // Pages can inherit their size, rotation and resources from the branch of the page
+            // tree they're on. That tree is replaced by one flat list below: make all of it each
+            // page's own first.
+            for (page in pages) {
+                page.resources?.let { page.resources = it }
+                page.mediaBox = page.mediaBox
+                page.cropBox = page.cropBox
+                page.rotation = page.rotation
+            }
+            val root = doc.pages.cosObject
+            val kids = COSArray()
+            for (index in order) {
+                val node = pages[index].cosObject
+                node.setItem(COSName.PARENT, root)
+                kids.add(node)
+            }
+            root.setItem(COSName.KIDS, kids)
+            root.setInt(COSName.COUNT, kids.size())
+            doc.save(output)
         }
     }
 

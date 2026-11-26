@@ -356,6 +356,9 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         _pages.value = emptyList()
         reorderMode.value = false
         editTarget.value = null
+        // "Apply to all pages" belongs to the scan it was switched on for, not to the next one.
+        filterForAll.value = false
+        adjustForAll.value = false
         old.forEach {
             it.source.delete()
             it.base?.delete()

@@ -35,6 +35,7 @@ import com.dock.scanner.ui.components.popExit
 import com.dock.scanner.ui.components.pushEnter
 import com.dock.scanner.ui.components.pushExit
 import com.dock.scanner.ui.editor.PageEditorScreen
+import com.dock.scanner.ui.images.ImagesScreen
 import com.dock.scanner.ui.main.MainShell
 import com.dock.scanner.ui.onboarding.StorageSetupScreen
 import com.dock.scanner.ui.preview.DocumentPreviewScreen
@@ -52,6 +53,7 @@ private object Routes {
     const val DOCUMENT = "document"
     const val TOOL = "tool"
     const val ABOUT = "about"
+    const val IMAGES = "images"
     fun camera(retakePageId: String? = null) = if (retakePageId == null) "camera" else "camera?retake=$retakePageId"
     fun page(id: String) = "page/$id"
 }
@@ -145,6 +147,18 @@ fun DockNavHost() {
                         )
                     }
                 }
+                composable(Routes.IMAGES) { entry ->
+                    BackSwipe(nav, entry) {
+                        ImagesScreen(
+                            vm = viewModel(),
+                            onBack = { nav.popBackStack() },
+                            onShowFolder = { folder ->
+                                libraryVm.showInShelf(folder)
+                                nav.popBackStack(Routes.MAIN, inclusive = false)
+                            },
+                        )
+                    }
+                }
                 composable(Routes.ABOUT) { entry ->
                     BackSwipe(nav, entry) { AboutScreen(onBack = { nav.popBackStack() }) }
                 }
@@ -178,6 +192,7 @@ fun DockNavHost() {
                             onImagesPicked = { uris ->
                                 newSession {
                                     scanVm.clear()
+                                    scanVm.targetFolderId = null
                                     scanVm.importImages(uris)
                                     nav.navigate(Routes.REVIEW)
                                 }
@@ -188,6 +203,7 @@ fun DockNavHost() {
                             },
                             onChangeLocation = { nav.navigate(Routes.CHANGE_FOLDER) },
                             onAbout = { nav.navigate(Routes.ABOUT) },
+                            onResizeImages = { nav.navigate(Routes.IMAGES) },
                         )
                     }
                 }

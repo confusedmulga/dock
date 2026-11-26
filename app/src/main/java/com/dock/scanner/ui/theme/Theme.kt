@@ -152,25 +152,3 @@ fun DockTheme(content: @Composable () -> Unit) {
     }
     MaterialTheme(colorScheme = colors, typography = DockTypography, shapes = DockShapes, content = content)
 }
-
-/** A container color and the content color that sits on it. */
-data class Accent(val container: Color, val onContainer: Color)
-
-/**
- * Per-tool accent colors (Material "custom colors"): each tool's hue as a tonal palette,
- * tone 90/35 in light theme and 30/85 in dark, so every pair meets contrast guidelines.
- */
-enum class ToolAccent(val light: Accent, val dark: Accent) {
-    Scan(light = Accent(Color(0xFFD3E4FF), Color(0xFF005494)), dark = Accent(Color(0xFF004881), Color(0xFFBBD6FF))),
-    Edit(light = Accent(Color(0xFFEBDCFF), Color(0xFF633BA5)), dark = Accent(Color(0xFF572E99), Color(0xFFE0CCFF))),
-    Compress(light = Accent(Color(0xFFFFDAD6), Color(0xFFA90111)), dark = Accent(Color(0xFF93000D), Color(0xFFFFC7C1))),
-    ToImages(light = Accent(Color(0xFFFFDDB5), Color(0xFF734A00)), dark = Accent(Color(0xFF643F00), Color(0xFFFFCB8A))),
-    Merge(light = Accent(Color(0xFFFDD6FF), Color(0xFF871AA3)), dark = Accent(Color(0xFF790096), Color(0xFFF8C3FF))),
-    Split(light = Accent(Color(0xFFFFDCC2), Color(0xFF7E4300)), dark = Accent(Color(0xFF6D3A00), Color(0xFFFFCAA0))),
-    ImagesToPdf(light = Accent(Color(0xFF98F994), Color(0xFF006017)), dark = Accent(Color(0xFF005313), Color(0xFF8AEA87))),
-    Documents(light = Accent(Color(0xFFA6EEFF), Color(0xFF00626F)), dark = Accent(Color(0xFF004F59), Color(0xFF83D2E3))),
-    Resize(light = Accent(Color(0xFFDEE0FF), Color(0xFF3E4A9C)), dark = Accent(Color(0xFF253283), Color(0xFFBAC3FF))),
-}
-
-@Composable
-fun toolAccent(accent: ToolAccent): Accent = if (isSystemInDarkTheme()) accent.dark else accent.light

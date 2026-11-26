@@ -2,12 +2,20 @@ package com.dock.scanner.ui
 
 import android.app.Application
 import android.net.Uri
+import android.util.Log
+import com.dock.scanner.pdf.PasswordProtectedException
+import com.dock.scanner.pdf.PdfTools
+import java.io.File
+import java.io.IOException
+import java.util.UUID
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.dock.scanner.DockApp
+import com.dock.scanner.data.FileSort
 import com.dock.scanner.data.storage.DockLibrary
 import com.dock.scanner.data.storage.LibraryItem
 import com.dock.scanner.ui.components.MainTab
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
@@ -35,6 +43,25 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     val root: StateFlow<Uri?> = _root.asStateFlow()
 
     private val reload = MutableStateFlow(0)
+
+    private val settings = (app as DockApp).settings
+
+    /** Order of the Files tab; remembered between launches. */
+    private val _fileSort = MutableStateFlow(settings.fileSort)
+    val fileSort: StateFlow<FileSort> = _fileSort.asStateFlow()
+
+    fun setFileSort(sort: FileSort) {
+        settings.fileSort = sort
+        _fileSort.value = sort
+    }
+
+    /**
+     * Where the library lives, e.g. "Documents/Dock". Folders on other providers (a cloud drive, an
+     * SD card app) have to be asked for their name, which happens off the main thread.
+     */
+    val rootLabel: StateFlow<String> = _root
+        .mapLatest { root -> root?.let { withContext(Dispatchers.IO) { runCatching { library.rootLabel(it) }.getOrNull() } } ?: "Dock" }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, _root.value?.let(library::localRootLabel) ?: "Dock")
 
     /** Every PDF and document, newest first; null while the first load runs. */
     val allFiles: StateFlow<List<LibraryItem>?> = combine(_root, reload) { root, _ -> root }
@@ -110,6 +137,14 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     private val _viewing = MutableStateFlow<LibraryItem?>(null)
     val viewing: StateFlow<LibraryItem?> = _viewing.asStateFlow()
 
+    /**
+     * Goes up each time Dock rewrites the viewed file itself, so the viewer opens it afresh. Its
+     * modified time can't be relied on for that: right after a write, storage can still report
+     * the old one for a moment.
+     */
+    private val _viewingRevision = MutableStateFlow(0)
+    val viewingRevision: StateFlow<Int> = _viewingRevision.asStateFlow()
+
     /** The tab the viewed file was opened from, so its page morphs back into the right thumbnail. */
     var viewingFrom: String = ""
         private set
@@ -139,8 +174,6 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     /** Folder currently open on the Shelf, used as the default target for a new scan. */
     val currentFolderId: String? get() = _shelfPath.value.lastOrNull()?.documentId
 
-    fun rootLabel(): String = _root.value?.let { runCatching { library.rootLabel(it) }.getOrNull() } ?: "Dock"
-
     private fun rootName(root: Uri) = library.rootLabel(root).substringAfterLast('/')
 
     /** Saves the folder the user picked. Returns false if Android didn't grant lasting access. */
@@ -169,6 +202,85 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     fun createFolder(name: String) = mutate("Couldn't create the folder") { root ->
         val parent = currentFolderId ?: library.rootId(root)
         library.createFolder(root, parent, name) ?: error("create failed")
+    }
+
+    /** Creates a folder in the Dock folder to save into (from the save sheet), and hands it to [onCreated]. */
+    fun createDestination(name: String, onCreated: (Destination) -> Unit) {
+        val root = _root.value ?: return
+        viewModelScope.launch {
+            val created = withContext(Dispatchers.IO) {
+                runCatching {
+                    val rootId = library.rootId(root)
+                    val id = library.idOf(library.createFolder(root, rootId, name) ?: error("create failed"))
+                    // The provider has the last word on the name: it adds " (1)" when it's taken.
+                    Destination(id, library.itemFor(root, id, rootId)?.name ?: name)
+                }.getOrNull()
+            }
+            if (created == null) {
+                _messages.trySend("Couldn't create the folder")
+            } else {
+                refresh()
+                onCreated(created)
+            }
+        }
+    }
+
+    /**
+     * Saves [item] with its pages in [order] (each the page's index in the file now). The PDF
+     * is rewritten from a copy, and put back as it was if writing fails partway. [done] hears
+     * whether it worked; the viewer then shows the saved file.
+     */
+    fun reorderPages(item: LibraryItem, order: List<Int>, done: (Boolean) -> Unit) {
+        val root = _root.value ?: return done(false)
+        val app = getApplication<Application>()
+        viewModelScope.launch {
+            val problem = withContext(Dispatchers.IO) {
+                val dir = File(app.cacheDir, "reorder/${UUID.randomUUID()}").apply { mkdirs() }
+                try {
+                    val before = library.stat(item.uri) ?: return@withContext "The PDF isn't there anymore"
+                    val input = File(dir, "in.pdf")
+                    app.contentResolver.openInputStream(item.uri)!!.use { src -> input.outputStream().use { src.copyTo(it) } }
+                    val output = File(dir, "out.pdf")
+                    PdfTools.reorder(input, output, order)
+                    // Rewritten meanwhile (its text was just made searchable, or another app saved it): keep that.
+                    if (library.stat(item.uri) != before) return@withContext "The PDF changed while saving. Try again."
+                    try {
+                        write(app, output, item.uri)
+                    } catch (e: IOException) {
+                        // The file was emptied by then: put the original back.
+                        runCatching { write(app, input, item.uri) }
+                        throw e
+                    }
+                    null
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: PasswordProtectedException) {
+                    "Password-protected PDFs can't be rearranged yet"
+                } catch (e: Throwable) {
+                    // Errors too: a malformed PDF can overflow the stack, a huge one run out of memory.
+                    Log.w("LibraryViewModel", "Couldn't reorder pages", e)
+                    "Couldn't save the new page order"
+                } finally {
+                    dir.deleteRecursively()
+                }
+            }
+            if (problem != null) {
+                _messages.trySend(problem)
+                done(false)
+                return@launch
+            }
+            if (_viewing.value?.documentId == item.documentId) {
+                withContext(Dispatchers.IO) { runCatching { library.itemFor(root, item.documentId, item.parentId) }.getOrNull() }
+                    ?.let { fresh -> _viewing.value = fresh.copy(folderName = item.folderName) }
+                _viewingRevision.value++
+            }
+            refresh()
+            done(true)
+        }
+    }
+
+    private fun write(app: Application, file: File, uri: Uri) {
+        app.contentResolver.openOutputStream(uri, "wt")!!.use { out -> file.inputStream().use { it.copyTo(out) } }
     }
 
     fun rename(item: LibraryItem, name: String) = mutate("Couldn't rename") { root ->

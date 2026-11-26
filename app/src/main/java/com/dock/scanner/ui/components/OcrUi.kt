@@ -3,7 +3,6 @@ package com.dock.scanner.ui.components
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
@@ -52,7 +51,7 @@ fun OcrMenuItem(item: LibraryItem, onDismiss: () -> Unit) {
     }
     val icon = @Composable { Icon(painterResource(R.drawable.ic_ocr), null) }
     if (progress != null) {
-        DropdownMenuItem(
+        DockMenuItem(
             text = { Labelled("Reading text… ${(progress * 100).roundToInt()}%", "Tap to stop") },
             leadingIcon = { CircularProgressIndicator(progress = { progress }, modifier = Modifier.size(22.dp), strokeWidth = 2.5.dp) },
             onClick = { ocr.stop(item.documentId); onDismiss() },
@@ -60,7 +59,7 @@ fun OcrMenuItem(item: LibraryItem, onDismiss: () -> Unit) {
         return
     }
     when (val s = state) {
-        OcrState.Loading -> DropdownMenuItem(
+        OcrState.Loading -> DockMenuItem(
             text = { Text("Searchable text") },
             leadingIcon = icon,
             trailingIcon = { Switch(checked = false, onCheckedChange = null, enabled = false) },
@@ -69,19 +68,19 @@ fun OcrMenuItem(item: LibraryItem, onDismiss: () -> Unit) {
         )
         OcrState.Unavailable -> Unit
         is OcrState.Known -> when {
-            s.info.hasLayer -> DropdownMenuItem(
+            s.info.hasLayer -> DockMenuItem(
                 text = { Labelled("Searchable text", "OCR") },
                 leadingIcon = icon,
                 trailingIcon = { Switch(checked = true, onCheckedChange = null) },
                 onClick = { ocr.turnOff(item); onDismiss() },
             )
-            s.info.madeByDock || s.info.choice != null -> DropdownMenuItem(
+            s.info.madeByDock || s.info.choice != null -> DockMenuItem(
                 text = { Labelled("Searchable text", "OCR") },
                 leadingIcon = icon,
                 trailingIcon = { Switch(checked = false, onCheckedChange = null) },
                 onClick = { ocr.turnOn(item); onDismiss() },
             )
-            else -> DropdownMenuItem(
+            else -> DockMenuItem(
                 text = { Labelled("Run OCR", "Make the text searchable") },
                 leadingIcon = icon,
                 onClick = { ocr.turnOn(item); onDismiss() },
